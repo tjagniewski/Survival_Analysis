@@ -1,0 +1,1184 @@
+---
+title: "Sprawozdanie 1"
+author: "Tadeusz Jagniewski"
+date: "2025-10-08"
+header-includes:
+  - \usepackage{fontspec}               
+  - \usepackage{polyglossia}           
+  - \setdefaultlanguage{polish}
+  - \usepackage{amsmath,amssymb,mathtools}
+  - \usepackage{graphicx}
+  - \usepackage{float}
+  - \usepackage{booktabs}               
+  - \usepackage{longtable}              
+  - \usepackage{array}                  
+  - \usepackage{multirow}               
+  - \usepackage{caption}                
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    fig_caption: yes
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(survival)
+library(tibble)
+library(tidyr)
+library(stringr)
+library(broom)
+library(survRM2)
+library(ggplot2)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# Lista 1
+
+## Zadanie 1
+
+```{r deklaracja funkcji, echo=TRUE}
+den_EW <- function(x, alpha = 1, beta = 1, gamma = 1) {
+  if (alpha <= 0 || beta <= 0 || gamma <= 0) {
+    stop("Błąd: Parametry alpha, beta i gamma muszą być większe niż 0")
+  }
+  
+  x1 <- (alpha / beta) * (x / beta)^(alpha - 1)
+  x2 <- (1 - exp(-(x / beta)^alpha))^(gamma - 1)
+  x3 <- exp(-(x / beta)^alpha)
+  
+  return(gamma * x1 * x2 * x3)
+}
+dys_EW <- function(x, alpha = 1, beta = 1, gamma = 1){
+  if (alpha <= 0 || beta <= 0 || gamma <= 0) {
+    stop("Błąd: Parametry alpha, beta i gamma muszą być większe niż 0")
+  }
+  return((1 - exp(-((x/beta)^alpha)))^gamma)
+}
+
+q_EW <- function(p, alpha, beta, gamma){
+  return(beta * ((-log(1 - p^(1/gamma)))^(1/alpha)))
+}
+
+h_EW <- function(x, alpha, beta, gamma){
+  x <- den_EW(x, alpha, beta, gamma)/(1 - dys_EW(x, alpha, beta, gamma))
+  return(x)
+}
+
+
+```
+
+## Zadanie 2
+
+```{r wykresy}
+# Ustawienie wartości x
+x_values <- seq(0.01, 10, by = 0.01)
+
+# Utworzenie jednego wykresu z wszystkimi krzywymi
+plot(x_values, h_EW(x_values, alpha = 0.5, beta = 2, gamma = 0.75), 
+     type = "l", col = "blue", lwd = 2,
+     main = "Funkcje hazardu dla róznych parametrów",
+     xlab = "x", 
+     ylab = "h(x)",
+     ylim = c(0,1.5),
+     na.rm = TRUE)
+
+# Dodanie pozostałych linii
+lines(x_values, h_EW(x_values, alpha = 1, beta = 2, gamma = 1), 
+      col = "red", lwd = 2)
+lines(x_values, h_EW(x_values, alpha = 1.5, beta = 3, gamma = 3), 
+      col = "green", lwd = 2)
+lines(x_values, h_EW(x_values, alpha = 0.75, beta = 1, gamma = 2), 
+      col = "purple", lwd = 2)
+lines(x_values, h_EW(x_values, alpha = 1.5, beta = 4, gamma = 0.125), 
+      col = "orange", lwd = 2)
+
+# Dodanie siatalphai
+grid()
+
+# Dodanie legendy z poprawnymi parametrami
+legend("topright", 
+       legend = c(
+         "alpha=0.5, beta=2, gamma=0.75",
+         "alpha=1, beta=2, gamma=1",
+         "alpha=1.5, beta=3, gamma=3",
+         "alpha=0.75, beta=1, gamma=2",
+         "alpha=1.5, beta=4, gamma=0.125"
+       ),
+       col = c("blue", "red", "green", "purple", "orange"),
+       lwd = 2,
+       bty = "n",
+       cex = 0.9)
+```
+
+## Zadanie 3 
+
+```{r generowanie zmiennych losowych, echo=TRUE}
+generate_EW <- function(n, alpha = 1, beta = 1, gamma = 1) {
+  p <- runif(n)
+  
+  x <- q_EW(p, alpha, beta, gamma)
+  
+  return(x)
+}
+
+
+```
+
+## Zadanie 4
+
+```{r generacja histogramow }
+# Wybrane trójki parametrów
+params1 <- list(alpha = 2, beta = 1, gamma = 1.5)
+params2 <- list(alpha = 1.5, beta = 2, gamma = 2)
+
+sample_sizes <- c(50, 100)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 4, 1))
+
+# Wykres 1: Parametry 1, n = 50
+set.seed(123)
+n1 <- 50
+samples1_n50 <- generate_EW(n1, params1$alpha, params1$beta, params1$gamma)
+
+x_range <- seq(0, max(samples1_n50) * 1.2, length.out = 500)
+
+hist(samples1_n50, breaks = 15, probability = TRUE,
+     main = sprintf("n = %d, alpha = %.1f, beta = %.1f, gamma = %.1f", 
+                    n1, params1$alpha, params1$beta, params1$gamma),
+     cex.main = 0.8,
+     xlab = "x", ylab = "Gestosc",
+     col = "lightblue", border = "black",
+     ylim = c(0, max(den_EW(x_range, params1$alpha, params1$beta, params1$gamma)) * 1.4))
+lines(x_range, den_EW(x_range, params1$alpha, params1$beta, params1$gamma),
+      col = "red", lwd = 2)
+
+legend("topright", legend = c("Teoretyczna\ngestosc", "Histogram"),
+       col = c("red", "lightblue"), lwd = c(2, 10), bty = "n", cex = 0.7)
+
+# Wykres 2: Parametry 1, n = 100
+set.seed(124)
+n2 <- 100
+samples1_n100 <- generate_EW(n2, params1$alpha, params1$beta, params1$gamma)
+
+x_range <- seq(0, max(samples1_n100) * 1.2, length.out = 500)
+
+hist(samples1_n100, breaks = 20, probability = TRUE,
+     main = sprintf("n = %d, alpha = %.1f, beta = %.1f, gamma = %.1f", 
+                    n2, params1$alpha, params1$beta, params1$gamma),
+     cex.main = 0.8,
+     xlab = "x", ylab = "Gestosc",
+     col = "blue", border = "black",
+     ylim = c(0, max(den_EW(x_range, params1$alpha, params1$beta, params1$gamma)) * 1.5))
+lines(x_range, den_EW(x_range, params1$alpha, params1$beta, params1$gamma),
+      col = "red", lwd = 2)
+
+legend("topright", legend = c("Teoretyczna\ngestosc", "Histogram"),
+       col = c("red", "blue"), lwd = c(2, 10), bty = "n", cex = 0.7)
+
+# Wykres 3: Parametry 2, n = 50
+set.seed(125)
+samples2_n50 <- generate_EW(n1, params2$alpha, params2$beta, params2$gamma)
+
+hist(samples2_n50, breaks = 15, probability = TRUE,
+     main = sprintf("n = %d, alpha = %.1f, beta = %.1f, gamma = %.1f", 
+                    n1, params2$alpha, params2$beta, params2$gamma),
+     cex.main = 0.8,
+     xlab = "x", ylab = "Gestosc",
+     col = "lightyellow", border = "black",
+     ylim = c(0, max(den_EW(x_range, params2$alpha, params2$beta, params2$gamma)) * 1.3))
+
+x_range <- seq(0, max(samples2_n50) * 1.2, length.out = 500)
+lines(x_range, den_EW(x_range, params2$alpha, params2$beta, params2$gamma),
+      col = "blue", lwd = 2)
+
+legend("topright", legend = c("Teoretyczna\ngestosc", "Histogram"),
+       col = c("blue", "lightyellow"), lwd = c(2, 10), bty = "n", cex = 0.7)
+
+# Wykres 4: Parametry 2, n = 100
+set.seed(126)
+samples2_n100 <- generate_EW(n2, params2$alpha, params2$beta, params2$gamma)
+
+hist(samples2_n100, breaks = 20, probability = TRUE,
+     main = sprintf("n = %d, alpha = %.1f, beta = %.1f, gamma = %.1f", 
+                    n2, params2$alpha, params2$beta, params2$gamma),
+     cex.main = 0.8,
+     xlab = "x", ylab = "Gestosc",
+     col = "yellow", border = "black",
+     ylim = c(0, max(den_EW(x_range, params2$alpha, params2$beta, params2$gamma)) * 1.3))
+
+x_range <- seq(0, max(samples2_n100) * 1.2, length.out = 500)
+lines(x_range, den_EW(x_range, params2$alpha, params2$beta, params2$gamma),
+      col = "blue", lwd = 2)
+
+legend("topright", legend = c("Teoretyczna\ngestosc", "Histogram"),
+       col = c("blue", "yellow"), lwd = c(2, 10), bty = "n", cex = 0.7)
+
+# Przywrócenie domyślnych ustawień graficznych
+par(mfrow = c(1, 1))
+
+```
+
+## Zadanie 5
+
+```{r porównanie statystk}
+# Funkcja do obliczania statystyk
+calculate_statistics <- function(data, alpha, beta, gamma, n) {
+  # Statystyki empiryczne
+  mean_emp <- mean(data)
+  median_emp <- median(data)
+  sd_emp <- sd(data)
+  q1_emp <- quantile(data, 0.25)
+  q3_emp <- quantile(data, 0.75)
+  range_emp <- max(data) - min(data)
+  min_emp <- min(data)
+  max_emp <- max(data)
+  
+  # Statystyki teoretyczne
+  median_theo <- q_EW(0.5, alpha, beta, gamma)
+  q1_theo <- q_EW(0.25, alpha, beta, gamma)
+  q3_theo <- q_EW(0.75, alpha, beta, gamma)
+  
+  mean_theo <- integrate(function(x) x * den_EW(x, alpha, beta, gamma), 
+                         lower = 0, upper = Inf)$value
+  
+  var_theo <- integrate(function(x) x^2 * den_EW(x, alpha, beta, gamma), 
+                        lower = 0, upper = Inf)$value - mean_theo^2
+  sd_theo <- sqrt(var_theo)
+  
+  params_text <- sprintf("alpha=%.1f, beta=%.1f, gamma=%.1f, n=%d", alpha, beta, gamma, n)
+  
+  df <- data.frame(
+    `Średnia (emp.)` = round(mean_emp, 3),
+    `Średnia (teor.)` = round(mean_theo, 3),
+    `Mediana (emp.)` = round(median_emp, 3),
+    `Mediana (teor.)` = round(median_theo, 3),
+    `Odch. std. (emp.)` = round(sd_emp, 3),
+    `Odch. std. (teor.)` = round(sd_theo, 3),
+    `Q1 (emp.)` = round(q1_emp, 3),
+    `Q1 (teor.)` = round(q1_theo, 3),
+    `Q3 (emp.)` = round(q3_emp, 3),
+    `Q3 (teor.)` = round(q3_theo, 3),
+    Rozstęp = round(range_emp, 3),
+    Minimum = round(min_emp, 3),
+    Maximum = round(max_emp, 3),
+    check.names = FALSE
+  )
+  
+  rownames(df) <- params_text
+  return(df)
+}
+
+stats1 <- calculate_statistics(samples1_n50, params1$alpha, params1$beta, 
+                                params1$gamma, 50)
+stats2 <- calculate_statistics(samples1_n100, params1$alpha, params1$beta, 
+                                params1$gamma, 100)
+stats3 <- calculate_statistics(samples2_n50, params2$alpha, params2$beta, 
+                                params2$gamma, 50)
+stats4 <- calculate_statistics(samples2_n100, params2$alpha, params2$beta, 
+                                params2$gamma, 100)
+
+all_stats <- rbind(stats1, stats2, stats3, stats4)
+
+# Tabela 1: Średnia, Mediana, Odch. std.
+stats_table1 <- all_stats[, 1:6]
+
+kable(stats_table1, 
+      caption = "Statystyki opisowe dla rozkladu EW - czesc 1",
+      booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"),
+                full_width = FALSE,
+                font_size = 7) %>%
+  add_header_above(c(" " = 1, "Srednia" = 2, "Mediana" = 2, "Odch. std." = 2)) %>%
+  column_spec(1, bold = TRUE, width = "3cm")
+
+stats_table2 <- all_stats[, 7:13]
+
+kable(stats_table2, 
+      caption = "Statystyki opisowe dla rozkladu EW - czesc 2",
+      booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"),
+                full_width = FALSE,
+                font_size = 7) %>%
+  add_header_above(c(" " = 1, "Q1" = 2, "Q3" = 2, "Inne" = 3)) %>%
+  column_spec(1, bold = TRUE, width = "3cm")
+```
+
+# Lista 2
+
+## Zadanie 1 
+
+```{r generowanie zmiennych cenzurowanych, echo=TRUE}
+generuj_dane_ge <- function(n, lambda, alfa) {
+  if (lambda <= 0 || alfa <= 0) {
+    stop("Parametry lambda i alfa muszą być dodatnie.")
+  }
+  u <- runif(n)
+  
+  t <- (-1 / lambda) * log(1 - u^(1 / alfa))
+  
+  return(t)
+}
+
+```
+
+### podpunkt a
+
+```{r generowanie typ1, echo=TRUE}
+generuj_ge_cenzura_typ1 <- function(n, lambda, alfa, t0) {
+  pelne_czasy <- generuj_dane_ge(n, lambda, alfa)
+  
+  obserwowane_czasy <- pmin(pelne_czasy, t0)
+  
+  status <- as.integer(pelne_czasy <= t0)
+  
+  return(data.frame(czas = obserwowane_czasy, status = status))
+}
+```
+
+### podpunkt b
+
+```{r generowanie typ2, echo=TRUE}
+generuj_ge_cenzura_typ2 <- function(n, lambda, alfa, m) {
+  if (m > n) {
+    stop("Liczba danych niecenzurowanych (m) nie może być większa od wielkości próby (n).")
+  }
+  
+  pelne_czasy <- generuj_dane_ge(n, lambda, alfa)
+  
+  posortowane_czasy <- sort(pelne_czasy)
+  
+  czas_cenzurowania_tm <- posortowane_czasy[m]
+  
+  obserwowane_czasy <- pmin(pelne_czasy, czas_cenzurowania_tm)
+  
+  status <- as.integer(pelne_czasy <= czas_cenzurowania_tm)
+  
+  return(data.frame(czas = obserwowane_czasy, status = status))
+}
+```
+
+### podpunkt c
+
+```{r generowanie losowe, echo=TRUE}
+generuj_ge_cenzura_losowa <- function(n, lambda, alfa, eta) {
+  czasy_zdarzenia <- generuj_dane_ge(n, lambda, alfa)
+  
+  czasy_cenzurowania <- rexp(n, rate = 1 / eta)
+  
+  obserwowane_czasy <- pmin(czasy_zdarzenia, czasy_cenzurowania)
+  
+  status <- as.integer(czasy_zdarzenia <= czasy_cenzurowania)
+  
+  return(data.frame(czas = obserwowane_czasy, status = status))
+}
+```
+
+## zadanie 2 
+
+```{r, tab1}
+# Parametry symulacji
+n_probek <- 100
+lambda_param <- 0.5
+alfa_param <- 1.5
+czas_obserwacji_t0 <- 3.0
+
+# Generowanie danych
+dane_typ1 <- generuj_ge_cenzura_typ1(
+  n = n_probek, 
+  lambda = lambda_param, 
+  alfa = alfa_param, 
+  t0 = czas_obserwacji_t0
+)
+
+# Statystyki Opisowe
+
+n_kompletne_1 <- sum(dane_typ1$status == 1)
+
+n_cenzurowane_1 <- sum(dane_typ1$status == 0)
+
+procent_cenz_1 <- (n_cenzurowane_1 / n_probek) * 100
+
+# Tworzenie tabeli podstawowych statystyk
+tabela_podstawowe_1 <- data.frame(
+  "Statystyka" = c("Całkowita liczba obserwacji (n)", 
+                   "Liczba danych kompletnych", 
+                   "Liczba danych cenzurowanych",
+                   "Procent danych cenzurowanych"),
+  "Wartosc" = c(n_probek, 
+                n_kompletne_1, 
+                n_cenzurowane_1,
+                paste0(procent_cenz_1, "%"))
+)
+
+# Tworzenie tabeli podsumowania czasów
+summary_stats <- c(summary(dane_typ1$czas), sd(dane_typ1$czas))
+tabela_summary_1 <- data.frame(
+  "Statystyka" = c("Minimum", "Q1", "Mediana", "Srednia", "Q3", "Maksimum", "Od. std."),
+  "Wartosc" = round(as.numeric(summary_stats), 3)
+)
+
+kable(tabela_podstawowe_1, 
+      caption = "Dane kompletne i cenzurowane dla Cenzurowania I-go typu",
+      booktabs = TRUE,
+      align = c("l", "r")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),
+                full_width = FALSE)
+
+kable(tabela_summary_1, 
+      caption = "Statystki opisowe dla danych Cenzurowania I-go typu",
+      booktabs = TRUE,
+      align = c("l", "r")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),
+                full_width = FALSE)
+```
+
+```{r, tab2}
+# Parametry symulacji
+n_probek <- 100
+lambda_param <- 0.5
+alfa_param <- 1.5
+liczba_niecenzurowanych_m <- 80 
+
+# Generowanie danych
+dane_typ2 <- generuj_ge_cenzura_typ2(
+  n = n_probek,
+  lambda = lambda_param,
+  alfa = alfa_param,
+  m = liczba_niecenzurowanych_m
+)
+
+n_kompletne_2 <- sum(dane_typ2$status == 1)
+
+n_cenzurowane_2 <- sum(dane_typ2$status == 0)
+
+procent_cenz_2 <- (n_cenzurowane_2 / n_probek) * 100
+
+tabela_podstawowe_2 <- data.frame(
+  "Statystyka" = c("Całkowita liczba obserwacji (n)", 
+                   "Liczba danych kompletnych", 
+                   "Liczba danych cenzurowanych",
+                   "Procent danych cenzurowanych"),
+  "Wartosc" = c(n_probek, 
+                n_kompletne_2, 
+                n_cenzurowane_2,
+                paste0(procent_cenz_2, "%"))
+)
+
+summary_stats_2 <- c(summary(dane_typ2$czas), sd(dane_typ2$czas))
+tabela_summary_2 <- data.frame(
+  "Statystyka" = c("Minimum", "Q1", "Mediana", "Srednia", "Q3", "Maksimum", "Od. std."),
+  "Wartosc" = round(as.numeric(summary_stats_2), 3)
+)
+
+kable(tabela_podstawowe_2, 
+      caption = "Dane kompletne i cenzurowane dla Cenzurowania II-go typu",
+      booktabs = TRUE,
+      align = c("l", "r")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),
+                full_width = FALSE)
+
+kable(tabela_summary_2, 
+      caption = "Statystki opisowe dla Cenzurowania II-go typu",
+      booktabs = TRUE,
+      align = c("l", "r")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),
+                full_width = FALSE)
+```
+
+```{r, tab3}
+# Parametry symulacji
+n_probek <- 200 # specjalnie używam większej ilośći aby uzsykać lepsze wyniki
+lambda_param <- 0.5
+alfa_param <- 1.5
+eta_cenzurowania <- 4.0 
+
+# Generowanie danych
+dane_typ_losowy <- generuj_ge_cenzura_losowa(
+  n = n_probek,
+  lambda = lambda_param,
+  alfa = alfa_param,
+  eta = eta_cenzurowania
+)
+
+
+n_kompletne_3 <- sum(dane_typ_losowy$status == 1)
+
+n_cenzurowane_3 <- sum(dane_typ_losowy$status == 0)
+
+procent_cenz_3 <- (n_cenzurowane_3 / n_probek) * 100
+
+tabela_podstawowe_3 <- data.frame(
+  "Statystyka" = c("Całkowita liczba obserwacji (n)", 
+                   "Liczba danych kompletnych", 
+                   "Liczba danych cenzurowanych",
+                   "Procent danych cenzurowanych"),
+  "Wartosc" = c(n_probek, 
+                n_kompletne_3, 
+                n_cenzurowane_3,
+                paste0(procent_cenz_3, "%"))
+)
+
+summary_stats_3 <- c(summary(dane_typ_losowy$czas), sd(dane_typ_losowy$czas))
+tabela_summary_3 <- data.frame(
+  "Statystyka" = c("Minimum", "Q1", "Mediana", "Srednia", "Q3", "Maksimum", "Od. std."),
+  "Wartosc" = round(as.numeric(summary_stats_3), 3)
+)
+
+# Wyświetlanie tabel
+kable(tabela_podstawowe_3, 
+      caption = "Dane kompletne i cenzurowane dla Cenzurowania Losowego",
+      booktabs = TRUE,
+      align = c("l", "r")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),
+                full_width = FALSE)
+
+kable(tabela_summary_3, 
+      caption = "Statystki opisowe dla Cenzurowania Losowe",
+      booktabs = TRUE,
+      align = c("l", "r")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),
+                full_width = FALSE)
+```
+
+## Zadanie 3
+
+```{r, pacjenci}
+# Grupa: Lek A
+czasy_A_remisja <- c(0.03345514, 0.08656403, 0.08799947, 0.24385821, 0.27755032, 
+                     0.40787247, 0.58825664, 0.64125620, 0.90679161, 0.94222208)
+status_A_remisja <- rep(1, 10) 
+czasy_A_cenzura <- rep(1, 10)
+status_A_cenzura <- rep(0, 10) 
+
+# Grupa: Lek B
+czasy_B_remisja <- c(0.03788958, 0.12207257, 0.20319983, 0.24474299, 0.30492413, 
+                     0.34224462, 0.42950144, 0.44484582, 0.63805066, 0.69119721)
+status_B_remisja <- rep(1, 10)
+czasy_B_cenzura <- rep(1, 10)
+status_B_cenzura <- rep(0, 10)
+
+dane_A <- data.frame(
+  czas = c(czasy_A_remisja, czasy_A_cenzura),
+  status = c(status_A_remisja, status_A_cenzura),
+  grupa = "Lek A"
+)
+
+dane_B <- data.frame(
+  czas = c(czasy_B_remisja, czasy_B_cenzura),
+  status = c(status_B_remisja, status_B_cenzura),
+  grupa = "Lek B"
+)
+
+# Estymatory KM 
+km_fit_A <- survfit(Surv(czas, status) ~ 1, data = dane_A)
+km_fit_B <- survfit(Surv(czas, status) ~ 1, data = dane_B)
+
+summary_A <- summary(km_fit_A)$table
+summary_B <- summary(km_fit_B)$table
+
+km_quantile <- function(kmfit, p) {
+  s <- summary(kmfit)
+  idx <- which(s$surv <= p)[1]
+  if (is.na(idx)) return(NA_real_)
+  s$time[idx]
+}
+
+# Kwantyle: Q1 ↔ S=0.75, mediana ↔ S=0.5, Q3 ↔ S=0.25
+Q1_A  <- km_quantile(km_fit_A, 0.75)
+Med_A <- km_quantile(km_fit_A, 0.5)
+Q3_A  <- km_quantile(km_fit_A, 0.25)
+
+Q1_B  <- km_quantile(km_fit_B, 0.75)
+Med_B <- km_quantile(km_fit_B, 0.5)
+Q3_B  <- km_quantile(km_fit_B, 0.25)
+
+# P(braku remisji) po 1 roku (S(1)) + 95% CI Greenwooda
+surv_1yr_A <- summary(km_fit_A, times = 1)
+surv_1yr_B <- summary(km_fit_B, times = 1)
+
+S1_A <- surv_1yr_A$surv
+S1_B <- surv_1yr_B$surv
+CI_S1_A <- sprintf("%.3f - %.3f", surv_1yr_A$lower, surv_1yr_A$upper)
+CI_S1_B <- sprintf("%.3f - %.3f", surv_1yr_B$lower, surv_1yr_B$upper)
+
+# Liczba cenzurowanych i odsetek
+cens_A <- summary_A['records'] - summary_A['events']
+cens_B <- summary_B['records'] - summary_B['events']
+pct_cens_A <- paste0(round(cens_A / summary_A['records'] * 100, 0), "%")
+pct_cens_B <- paste0(round(cens_B / summary_B['records'] * 100, 0), "%")
+
+# RMST do 1 roku 
+rmst_km <- function(kmfit, tau = 1) {
+  s <- summary(kmfit)
+  tt <- s$time
+  ss <- s$surv
+  times <- c(0, tt[tt < tau], tau)
+  surv_steps <- c(1, ss[tt < tau])
+  sum(surv_steps * diff(times))
+}
+
+RMST_A <- rmst_km(km_fit_A, tau = 1)
+RMST_B <- rmst_km(km_fit_B, tau = 1)
+
+tabela_statystyk <- data.frame(
+  Statystyka = c("Liczba pacjentów",
+                 "Liczba remisji",
+                 "Liczba cenzurowanych",
+                 "Odsetek cenzurowanych",
+                 "Q1 (25% remisji)",
+                 "Mediana",
+                 "Q3 (75% remisji)",
+                 "P(braku remisji) po 1 roku (S(1))",
+                 "95% CI dla S(1)",
+                 "RMST do 1 roku"),
+  `Lek A` = c(summary_A['records'],
+              summary_A['events'],
+              cens_A,
+              pct_cens_A,
+              round(Q1_A, 3),
+              round(Med_A, 3),
+              ifelse(is.na(Q3_A), NA, round(Q3_A, 3)),
+              round(S1_A, 3),
+              CI_S1_A,
+              round(RMST_A, 3)),
+  `Lek B` = c(summary_B['records'],
+              summary_B['events'],
+              cens_B,
+              pct_cens_B,
+              round(Q1_B, 3),
+              round(Med_B, 3),
+              ifelse(is.na(Q3_B), NA, round(Q3_B, 3)),
+              round(S1_B, 3),
+              CI_S1_B,
+              round(RMST_B, 3))
+)
+
+kable(tabela_statystyk, 
+      caption = "Statystyki opisowe (Kaplan–Meier) dla czasu do remisji",
+      booktabs = TRUE,
+      digits = 3,
+      row.names = FALSE,
+      align = c("l", "r", "r")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),
+                full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "6cm")
+
+```
+
+# Lista 3
+
+## Zadanie 1
+
+### podpunkt a
+
+```{r, najwieksza wiarygodnosc sredniego czasu}
+czasy_A_remisja <- c(0.03345514, 0.08656403, 0.08799947, 0.24385821, 0.27755032, 
+                     0.40787247, 0.58825664, 0.64125620, 0.90679161, 0.94222208)
+czasy_B_remisja <- c(0.03788958, 0.12207257, 0.20319983, 0.24474299, 0.30492413, 
+                     0.34224462, 0.42950144, 0.44484582, 0.63805066, 0.69119721)
+
+#Parametry badania
+n_A <- 20
+n_B <- 20
+R_A <- 10 
+R_B <- 10 
+t0 <- 1.0 
+
+
+# T1 = (suma czasów zdarzeń) + (liczba cenzurowanych) * (czas cenzurowania)
+T1_A <- sum(czasy_A_remisja) + (n_A - R_A) * t0
+T1_B <- sum(czasy_B_remisja) + (n_B - R_B) * t0
+
+# Obliczenie MLE dla średniego czasu (mi = 1/theta) 
+# mi = T1 / R
+mi_A_typ1 <- T1_A / R_A
+mi_B_typ1 <- T1_B / R_B
+
+tabela_zad1a <- data.frame(
+  Grupa = c("Lek A", "Lek B"),
+  "Łączny czas obserwacji (T1)" = c(T1_A, T1_B),
+  "Liczba remisji (R)" = c(R_A, R_B),
+  "MLE sredniego czasu (mi = T1/R)" = c(mi_A_typ1, mi_B_typ1)
+)
+
+kable(tabela_zad1a, 
+      caption = "Zadanie 1(a): Oszacowania MLE dla cenzurowania typu I (t0 = 1 rok)",
+      booktabs = TRUE,
+      digits = 4,
+      row.names = FALSE,
+      align = 'c',
+      check.names = FALSE) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+
+```
+
+### podpunkt b
+
+```{r, przedziały ufności do reemisji}
+z_0975 <- qnorm(0.975) # dla alpha = 0.05
+z_0995 <- qnorm(0.995) # dla alpha = 0.01
+
+sqrt_R_A <- sqrt(R_A)
+ci_A_95_L_typ1 <- mi_A_typ1 * exp(-z_0975 / sqrt_R_A)
+ci_A_95_U_typ1 <- mi_A_typ1 * exp( z_0975 / sqrt_R_A)
+ci_A_99_L_typ1 <- mi_A_typ1 * exp(-z_0995 / sqrt_R_A)
+ci_A_99_U_typ1 <- mi_A_typ1 * exp( z_0995 / sqrt_R_A)
+
+sqrt_R_B <- sqrt(R_B)
+ci_B_95_L_typ1 <- mi_B_typ1 * exp(-z_0975 / sqrt_R_B)
+ci_B_95_U_typ1 <- mi_B_typ1 * exp( z_0975 / sqrt_R_B)
+ci_B_99_L_typ1 <- mi_B_typ1 * exp(-z_0995 / sqrt_R_B)
+ci_B_99_U_typ1 <- mi_B_typ1 * exp( z_0995 / sqrt_R_B)
+ 
+wyniki_zad1 <- data.frame(
+  Grupa = c("Lek A", "Lek A", "Lek B", "Lek B"),
+  Statystyka = c("MLE sredniego czasu (lata)", 
+                 "95% CI (alpha=0.05)",
+                 "99% CI (alpha=0.01)",
+                 NA), 
+  Wartosc = c(mi_A_typ1, 
+              sprintf("[%.4f, %.4f]", ci_A_95_L_typ1, ci_A_95_U_typ1),
+              sprintf("[%.4f, %.4f]", ci_A_99_L_typ1, ci_A_99_U_typ1),
+              NA),
+  Wartosc_B = c(mi_B_typ1, 
+                sprintf("[%.4f, %.4f]", ci_B_95_L_typ1, ci_B_95_U_typ1),
+                sprintf("[%.4f, %.4f]", ci_B_99_L_typ1, ci_B_99_U_typ1),
+                NA)
+)
+
+tabela_zad1 <- data.frame(
+  Grupa = c("Lek A", "Lek B"),
+  `MLE średniego czasu μ [lata]` = c(mi_A_typ1, mi_B_typ1),
+  `CI dla mi (1−alpha = 0.95), dwustronny, log` = c(
+    sprintf("[%.4f, %.4f]", ci_A_95_L_typ1, ci_A_95_U_typ1),
+    sprintf("[%.4f, %.4f]", ci_B_95_L_typ1, ci_B_95_U_typ1)
+  ),
+  `CI dla mi (1−alpha = 0.99), dwustronny, log` = c(
+    sprintf("[%.4f, %.4f]", ci_A_99_L_typ1, ci_A_99_U_typ1),
+    sprintf("[%.4f, %.4f]", ci_B_99_L_typ1, ci_B_99_U_typ1)
+  )
+)
+
+kable(
+  tabela_zad1,
+  caption = "Rozklad wykladniczy, cenzurowanie typu I (t₀ = 1 rok). Przedzialy dla mi wyznaczone na skali log(mi).",
+  booktabs = TRUE, digits = 4, row.names = FALSE, align = 'c', check.names = FALSE
+) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+```
+
+## Zadanie 2
+
+```{r, zadanie2/3}
+n_A <- length(czasy_A_remisja) + (n_A - R_A) 
+n_B <- length(czasy_B_remisja) + (n_B - R_B)  
+
+# Stopnie swobody dla Typu II: df = 2R (liczba zdarzeń)
+df_chi2_A <- 2 * R_A
+df_chi2_B <- 2 * R_B
+
+t_R_A <- max(czasy_A_remisja)
+t_R_B <- max(czasy_B_remisja)
+
+T2_A <- sum(czasy_A_remisja) + (n_A - R_A) * t_R_A
+T2_B <- sum(czasy_B_remisja) + (n_B - R_B) * t_R_B
+
+mi_A_typ2 <- T2_A / R_A
+mi_B_typ2 <- T2_B / R_B
+
+# 95%
+chi_L_95_A <- qchisq(0.025, df = df_chi2_A); chi_U_95_A <- qchisq(0.975, df = df_chi2_A)
+chi_L_95_B <- qchisq(0.025, df = df_chi2_B); chi_U_95_B <- qchisq(0.975, df = df_chi2_B)
+# 99%
+chi_L_99_A <- qchisq(0.005, df = df_chi2_A); chi_U_99_A <- qchisq(0.995, df = df_chi2_A)
+chi_L_99_B <- qchisq(0.005, df = df_chi2_B); chi_U_99_B <- qchisq(0.995, df = df_chi2_B)
+
+ci_A_95_L_typ2 <- (2 * T2_A) / chi_U_95_A
+ci_A_95_U_typ2 <- (2 * T2_A) / chi_L_95_A
+ci_A_99_L_typ2 <- (2 * T2_A) / chi_U_99_A
+ci_A_99_U_typ2 <- (2 * T2_A) / chi_L_99_A
+
+ci_B_95_L_typ2 <- (2 * T2_B) / chi_U_95_B
+ci_B_95_U_typ2 <- (2 * T2_B) / chi_L_95_B
+ci_B_99_L_typ2 <- (2 * T2_B) / chi_U_99_B
+ci_B_99_U_typ2 <- (2 * T2_B) / chi_L_99_B
+
+tabela_zad2 <- data.frame(
+  Grupa = c("Lek A", "Lek B"),
+  `MLE średniego czasu mi [lata]` = c(mi_A_typ2, mi_B_typ2),  
+  `95% CI dla mi` = c(
+    sprintf("[%.4f, %.4f]", ci_A_95_L_typ2, ci_A_95_U_typ2),
+    sprintf("[%.4f, %.4f]", ci_B_95_L_typ2, ci_B_95_U_typ2)
+  ),
+  `99% CI dla mi` = c(
+    sprintf("[%.4f, %.4f]", ci_A_99_L_typ2, ci_A_99_U_typ2),
+    sprintf("[%.4f, %.4f]", ci_B_99_L_typ2, ci_B_99_U_typ2)
+  )
+)
+
+kable(
+  tabela_zad2, 
+  caption = "Zadanie 2 — Rozkład wykładniczy, cenzurowanie typu II (R = 10). Dokładne przedziały $chi^2$ dla $mi$.",
+  booktabs = TRUE,
+  digits = 4,
+  row.names = FALSE,
+  align = 'c',
+  check.names = FALSE,
+  escape = FALSE  
+) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+```
+
+## Zadanie 3
+
+```{r, Zadanie3/3}
+set.seed(42) 
+N_sim <- 100000 # Duża liczba symulacji dla stabilnych wyników
+theta_true <- 1.0
+n_vals <- c(10, 30)
+t0_vals <- c(0.5, 1, 2)
+
+# Lista do przechowywania wyników
+results_list <- list()
+
+for (n in n_vals) {
+  for (t0 in t0_vals) {
+    
+    #Wygenerowanie próbek na raz (wektorowo)
+    X_matrix <- matrix(rexp(n * N_sim, rate = theta_true), nrow = N_sim, ncol = n)
+    
+    #cenzurowanie typu I
+    t_obs_matrix <- pmin(X_matrix, t0)
+    status_matrix <- (X_matrix <= t0)
+    
+    #Obliczanie R i T1 dla każdego wiersza (symulacji)
+    R_vec <- rowSums(status_matrix)
+    # Suma tylko czasów zdarzeń (t_obs * status)
+    sum_event_times_vec <- rowSums(t_obs_matrix * status_matrix) 
+    T1_vec <- sum_event_times_vec + (n - R_vec) * t0
+    
+    #Obliczanie estymatorów 
+    theta_hat <- R_vec / T1_vec
+    theta_tilde <- -log(1 - R_vec / n) / t0
+    
+    #Przypadki brzegowych
+    # Jeśli R=0, T1 = n*t0, więc theta_hat = 0 / (n*t0) = 0.
+    theta_hat[R_vec == 0] <- 0 
+    # Jeśli R=0, theta_tilde = -log(1)/t0 = 0.
+    theta_tilde[R_vec == 0] <- 0
+    # Jeśli R=n, theta_tilde = -log(0)/t0 = Inf. Traktujemy jako NA.
+    theta_tilde[R_vec == n] <- NA 
+    
+    #Obliczanie Bias i MSE 
+    bias_hat <- mean(theta_hat - theta_true, na.rm = TRUE)
+    mse_hat <- mean((theta_hat - theta_true)^2, na.rm = TRUE)
+    
+    bias_tilde <- mean(theta_tilde - theta_true, na.rm = TRUE)
+    mse_tilde <- mean((theta_tilde - theta_true)^2, na.rm = TRUE)
+    
+    results_list[[paste(n, t0)]] <- data.frame(
+      n = n,
+      t0 = t0,
+      Bias_hat = bias_hat,
+      MSE_hat = mse_hat,
+      Bias_tilde = bias_tilde,
+      MSE_tilde = mse_tilde
+    )
+  }
+}
+
+results_df <- do.call(rbind, results_list)
+rownames(results_df) <- NULL
+
+kable(
+  results_df, 
+  caption = "Zadanie 3: Porównanie estymatorów $\\hat{\\theta}$ i $\\tilde{\\theta}$ (dla $\\theta=1$)",
+  booktabs = TRUE,
+  digits = 4,
+  col.names = c("$n$", "$t_0$", "Bias", "MSE", "Bias", "MSE"),
+  align = 'c',
+  escape = FALSE      
+) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE) %>%
+  add_header_above(
+    c(" " = 2, 
+      "Estymator $\\hat{\\theta} = R/T_1$ (MLE)" = 2, 
+      "Estymator $\\tilde{\\theta} = -\\log(1-R/n)/t_0$" = 2),
+    escape = FALSE
+  )
+```
+
+# Lista 4
+
+## Zadanie 1
+
+```{r, deklarcja funkcji hipotez, echo=TRUE}
+oblicz_p_wartosc_lrt <- function(r, s, n, t0, theta0, 
+                                 typ_hipotezy = c("dwustronna", "prawostronna", "lewostronna")) {
+  
+  #Walidacja i dopasowanie argumentów 
+  typ_hipotezy <- match.arg(typ_hipotezy) 
+  
+  if (theta0 <= 0) {
+    stop("theta0 musi być wartością dodatnią (parametr intensywności).")
+  }
+  if (r < 0 || s < 0 || n < r || t0 <= 0) {
+    stop("Niewłaściwe wartości argumentów (r, s, n, t0).")
+  }
+
+  # Całkowity czas na teście 
+  S_total <- s + (n - r) * t0
+
+  
+  # Wartość log-wiarogodności dla hipotezy H0
+  l_theta_0 <- r * log(theta0) - theta0 * S_total
+
+  
+  if (r == 0) {
+    theta_hat <- 0
+    l_theta_hat <- 0
+  } else {
+    theta_hat <- r / S_total
+    l_theta_hat <- r * log(theta_hat) - r
+  }
+
+  # Statystyka ilorazu wiarogodności G^2 
+  # G^2 = 2 * (l(theta_hat) - l(theta_0))
+  
+  # Zabezpieczenie przed błędami numerycznymi, gdy theta_hat jest (prawie) równe theta0
+  if (abs(theta_hat - theta0) < .Machine$double.eps^0.5) {
+    G2 <- 0
+  } else {
+    G2 <- 2 * (l_theta_hat - l_theta_0)
+    
+    # G^2 z definicji musi być >= 0. 
+    # Jeśli jest ujemne, to tylko z powodu błędu precyzji zmiennoprzecinkowej.
+    if (G2 < 0) {
+      G2 <- 0
+    }
+  }
+
+  
+  # R = sign(theta_hat - theta_0) * sqrt(G^2)
+  
+  if (G2 == 0) {
+    R_stat <- 0
+  } else {
+    R_stat <- sign(theta_hat - theta0) * sqrt(G2)
+  }
+
+  
+  p_wartosc <- switch(
+    typ_hipotezy,
+    
+    "dwustronna" = {
+      # p-wartość = P(|Z| > |R|) = 2 * P(Z < -|R|)
+      2 * pnorm(-abs(R_stat))
+    },
+    
+    "prawostronna" = {
+      # p-wartość = P(Z > R_stat)
+      pnorm(R_stat, lower.tail = FALSE)
+    },
+    
+    "lewostronna" = {
+      # p-wartość = P(Z < R_stat)
+      pnorm(R_stat, lower.tail = TRUE)
+    }
+  )
+  
+  return(p_wartosc)
+}
+```
+
+
+## Zadanie 2
+
+```{r}
+set.seed(42)
+
+N_sim <- 10000
+alpha <- 0.05
+theta0 <- 0.1
+t0 <- 15.0
+wartosci_n <- c(20, 50)
+wartosci_theta_true <- c(0.04, 0.06, 0.08, 0.09, 0.095, 0.10, 0.105, 0.11, 0.12, 0.14, 0.16)
+
+wyniki_symulacji <- data.frame(
+  n = integer(),
+  theta_true = double(),
+  proporcja_odrzucen = double(),
+  typ_testu = character()
+)
+
+for (n_val in wartosci_n) {
+  for (theta_true_val in wartosci_theta_true) {
+    p_values <- numeric(N_sim)
+
+    for (i in 1:N_sim) {
+      T_i <- rexp(n_val, rate = theta_true_val)
+      is_complete <- (T_i <= t0)
+      r_sim <- sum(is_complete)
+      s_sim <- sum(T_i[is_complete])
+
+      p_values[i] <- oblicz_p_wartosc_lrt(
+        r = r_sim,
+        s = s_sim,
+        n = n_val,
+        t0 = t0,
+        theta0 = theta0,
+        typ_hipotezy = "dwustronna"
+      )
+    }
+
+    proporcja <- mean(p_values < alpha, na.rm = TRUE)
+    typ <- ifelse(theta_true_val == theta0, "Rozmiar (H0)", "Moc (H1)")
+
+    wyniki_symulacji <- rbind(
+      wyniki_symulacji,
+      data.frame(
+        n = n_val,
+        theta_true = theta_true_val,
+        proporcja_odrzucen = proporcja,
+        typ_testu = typ,
+        row.names = NULL
+      )
+    )
+  }
+}
+
+drukuj_tabele_n <- function(df, n_val, alpha, theta0, t0) {
+  df_n <- df %>%
+    filter(n == n_val) %>%
+    select(theta_true, typ_testu, proporcja_odrzucen) %>%
+    mutate(theta_true = sprintf("%.3f", theta_true)) %>%
+    pivot_wider(names_from = typ_testu, values_from = proporcja_odrzucen) %>%
+    arrange(as.numeric(theta_true))
+
+  kable(
+    df_n,
+    caption = sprintf(
+      "Symulacja rozmiaru i mocy testu LRT (dwustronny): n = %d, $\\alpha$ = %.02f, $t_0$ = %.1f, $\\theta_0$ = %.2f",
+      n_val, alpha, t0, theta0
+    ),
+    escape = FALSE,
+    booktabs = TRUE,
+    digits = 3,
+    row.names = FALSE,
+    align = 'c',
+    col.names = c("theta (true)", "Rozmiar (H0)", "Moc (H1)")
+  ) %>%
+    kable_styling(latex_options = c("striped", "hold_position"), full_width = FALSE) %>%
+    column_spec(1, bold = TRUE, width = "2.5cm")
+}
+
+# wydrukuj obie tabelki
+drukuj_tabele_n(wyniki_symulacji, 20, alpha, theta0, t0)
+drukuj_tabele_n(wyniki_symulacji, 50, alpha, theta0, t0)
+
+ggplot(wyniki_symulacji, aes(x = theta_true, 
+                             y = proporcja_odrzucen, 
+                             color = as.factor(n), 
+                             group = as.factor(n))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  
+  # Linia dla H0 (theta0)
+  geom_vline(xintercept = theta0, linetype = "dashed", color = "black") +
+  
+  # Linia dla docelowego poziomu istotności (alpha)
+  geom_hline(yintercept = alpha, linetype = "dotted", color = "red") +
+  
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Krzywe mocy testu LRT dla danych cenzurowanych",
+    subtitle = paste("H0: theta =", theta0, "| t0 =", t0, "| alpha =", alpha, "| N_sim = 10 000"),
+    x = "Prawdziwa wartosc parametru (theta_true)",
+    y = "Proporcja odrzucen H0 (Moc / Rozmiar)",
+    color = "Rozmiar próby (n)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## Zadanie 3 
+
+```{r}
+
+
+dane_A_czasy <- c(0.03345514, 0.08656403, 0.08799947, 0.24385821, 
+                  0.27755032, 0.40787247, 0.58825664, 0.64125620, 
+                  0.90679161, 0.94222208)
+s_A <- sum(dane_A_czasy)
+r_A <- 10
+n_A <- 20
+t0 <- 1.0
+theta0_H0 <- 1.0
+
+p_wartosc_A <- oblicz_p_wartosc_lrt(
+  r = r_A,
+  s = s_A,
+  n = n_A,
+  t0 = t0,
+  theta0 = theta0_H0,
+  typ_hipotezy = "dwustronna"
+)
+
+
+dane_B_czasy <- c(0.03788958, 0.12207257, 0.20319983, 0.24474299, 
+                  0.30492413, 0.34224462, 0.42950144, 0.44484582, 
+                  0.63805066, 0.69119721)
+s_B <- sum(dane_B_czasy)
+r_B <- 10
+n_B <- 20
+# t0 i theta0_H0 są takie same
+
+p_wartosc_B <- oblicz_p_wartosc_lrt(
+  r = r_B,
+  s = s_B,
+  n = n_B,
+  t0 = t0,
+  theta0 = theta0_H0,
+  typ_hipotezy = "dwustronna"
+)
+
+fmt_p <- function(p) {
+  ifelse(p < 1e-4, sprintf("< %.1e", 1e-4), formatC(p, digits = 4, format = "fg"))
+}
+
+wyniki_H0 <- data.frame(
+  Grupa = c("Lek A", "Lek B"),
+  n     = c(n_A, n_B),
+  r     = c(r_A, r_B),
+  s     = c(round(s_A, 5), round(s_B, 5)),
+  t0    = c(t0, t0),
+  theta0 = c(theta0_H0, theta0_H0),
+  `p_dwustronny_LRT` = c(p_wartosc_A, p_wartosc_B)
+)
+
+alpha <- 0.05
+wyniki_H0$Decyzja <- ifelse(wyniki_H0$p_dwustronny_LRT < alpha, "Odrzuć H0", "Brak podstaw")
+
+kable(
+  transform(wyniki_H0,
+            p = fmt_p(p_dwustronny_LRT))[, c("Grupa","n","r","s","t0","theta0","p","Decyzja")],
+  caption = "Weryfikacja H0: $\\theta = \\theta_0$ (dwustronny LRT) dla grup A i B.",
+  booktabs = TRUE,
+  digits = 5,
+  align = "c",
+  col.names = c("Grupa", "$n$", "$r$", " $s$ ", " $t_0$ ", " $\\theta_0$ ", "$p$-wartość", paste0("Decyzja ($\\alpha$=", alpha, ")")),
+  escape = FALSE
+) %>%
+  kable_styling(latex_options = c("striped","hold_position"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+```
+
+
+
