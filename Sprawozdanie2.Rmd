@@ -1,0 +1,767 @@
+---
+title: "Sprawozdanie 2"
+author: "Tadeusz Jagniewski"
+date: "2025-12-08"
+header-includes:
+  - \usepackage{fontspec}               
+  - \usepackage{polyglossia}           
+  - \setdefaultlanguage{polish}
+  - \usepackage{amsmath,amssymb,mathtools}
+  - \usepackage{graphicx}
+  - \usepackage{float}
+  - \usepackage{booktabs}               
+  - \usepackage{longtable}              
+  - \usepackage{array}                  
+  - \usepackage{multirow}               
+  - \usepackage{caption}                
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    fig_caption: yes
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(survival)
+library(tibble)
+library(tidyr)
+library(stringr)
+library(broom)
+library(survRM2)
+library(ggplot2)
+library(survminer)
+library(coin)
+library(gridExtra)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, dev = "cairo_pdf")
+```
+
+# Estymator Kaplana-Meiera i Fleminga-Harringtona
+
+W tym rozdziale skupię się na porównaniu estymatrów Kaplana-Meiera oraz Fleminga-Harringtona, następnie zaimplementuję zgodnie z propozycją Browna, Hollandera i Kowara "ogon" do estymatora Kaplana-Meiera, aby finalnie na przykładzie wygenerowanym na podstawie generatora z poprzedniego sprawozdania spróbować ocenić, czy estymator Kaplana-Meiera jest asymptotycznie normalny w $t_0$ i $2t_0$.
+
+\newpage
+
+## Wizualne porówananie estymatorów
+
+```{r estymator km i fh, fig.cap = "Osobne wykresy estymatorów K-M i F-H dla danych Lek A i Lek B"}
+czasy_A_zdarzenia <- c(0.03345514, 0.08656403, 0.08799947, 0.24385821, 
+                       0.27755032, 0.40787247, 0.58825664, 0.64125620, 
+                       0.90679161, 0.94222208)
+czasy_A_cenz <- rep(1.0, 10)
+
+time_A <- c(czasy_A_zdarzenia, czasy_A_cenz)
+status_A <- c(rep(1, 10), rep(0, 10))
+
+czasy_B_zdarzenia <- c(0.03788958, 0.12207257, 0.20319983, 0.24474299, 
+                       0.30492413, 0.34224462, 0.42950144, 0.44484582, 
+                       0.63805066, 0.69119721)
+czasy_B_cenz <- rep(1.0, 10)
+time_B <- c(czasy_B_zdarzenia, czasy_B_cenz)
+status_B <- c(rep(1, 10), rep(0, 10))
+
+dane <- data.frame(
+  time = c(time_A, time_B),
+  status = c(status_A, status_B),
+  group = c(rep("Lek A", 20), rep("Lek B", 20))
+)
+
+
+km_fit <- survfit(Surv(time, status) ~ group, data = dane, type = "kaplan-meier")
+
+par(mfrow = c(1, 2))
+
+plot(km_fit, 
+     col = c("orange", "red"), 
+     lty = 1, lwd = 2,
+     conf.int = FALSE, 
+     xlab = "Czas (lata)", 
+     ylab = "Prawdopodobieństwo braku remisji S(t)", 
+     main = "Estymator K-M")
+legend("topright", legend = c("Lek A", "Lek B"), col = c("orange", "red"), lty = 1, lwd = 2)
+
+
+fh_fit <- survfit(Surv(time, status) ~ group, data = dane, type = "fleming-harrington")
+
+plot(fh_fit, 
+     col = c("green", "darkblue"), 
+     lty = 1, lwd = 2,
+     conf.int = FALSE, 
+     xlab = "Czas (lata)", 
+     ylab = "Prawdopodobieństwo braku remisji S(t)", 
+     main = "Estymator F-H")
+legend("topright", legend = c("Lek A", "Lek B"), col = c("green", "darkblue"), lty = 1, lwd = 2)
+
+par(mfrow = c(1, 1))
+```
+
+
+
+Można zauważyć, że obydwa estymatory mają bardzo podobne działanie i różnice między nimi są minialne, aby to jeszcze lepiej pokazać, zostawiając taką samą kolorystykę przedstawie je na jednym wykresie.
+
+\newpage
+
+```{r połącznoe wykresy, fig.cap="Połączony wykres estymatorów K-M i F-H dla danych Lek A i Lek B"}
+plot(km_fit, col = c("orange", "red"), conf.int = FALSE, main = "Porównanie KM (ciągła) i FH (przerywana)", xlab = "Czas (lata)", 
+     ylab = "Prawdopodobieństwo braku remisji S(t)")
+lines(fh_fit, col = c("green", "darkblue"), lty = 1, conf.int = FALSE)
+```
+
+
+Ten wykres potweirdza moje przypuszczenia i rzeczywiście estymatory mają bardzo zbliżone działanie. Na początku różnice są niemal niezawuażalne i dopiero w okolicach połowy wykresu można zauważyć, że estymator Fleminga-Harringtona przyjmuje minimalnie większe wartości od estymatora Kaplana-Meiera.
+
+## Estymator Kaplana-Meiera z "ogonem"
+ 
+Ogon do tego estymatora ronimy na podstawie propozycji Browna, Hollandera i Kowara, która wygląda mniej więcej następująco:
+
+Szukamy odpowiedniej funkcji przeżycia rozkładu wykładniczego, która w punkcie $t^+$ (będzie to pierwszy moment cenzurowania danych) będzie równa $\widehat{S}(t^+)$. Odpowieni parametr $\theta$ zatem zynaczamy z równania:
+
+$$e^{-\theta t^+} = \widehat{S}(t^+) $$
+
+i wynosi:
+
+$$ \theta = - \frac{ln \widehat{S}(t^+)}{t^+}$$
+
+i stąd otrzymujemy
+
+$$ \widehat{S}(t) = exp\left[\frac{ln \widehat{S}(t^+)}{t^+} t \right]$$
+
+\newpage
+
+```{r ogony, fig.cap="Wykres estymatora K-M z 'ogonem' BHK dla danych Lek A i Lek B"}
+#Funckja do wyznaczania S(t)
+brown_hollander_tail_func <- function(t_grid, t_plus, S_t_plus) {
+  # Obliczenie parametru theta 
+  # theta = - ln(S(t+)) / t+ 
+  theta <- -log(S_t_plus) / t_plus
+  
+  # Obliczenie wartości funkcji przeżycia dla ogona
+  S_tail <- exp(-theta * t_grid)
+  
+  return(S_tail)
+}
+
+#funkcja z pobieraniem danych i tworzeniem wykresu
+get_km_with_tail <- function(data_subset, group_name, max_x = 3.0) {
+  
+  # Standardowy estymator Kaplana-Meiera
+  fit <- survfit(Surv(time, status) ~ 1, data = data_subset)
+  
+  # Pobranie danych z obiektu survfit
+  df_km <- data.frame(
+    time = fit$time,
+    surv = fit$surv,
+    group = group_name,
+    type = "Kaplan-Meier"
+  )
+  
+  # Dodanie punktu startowego (t=0, S=1)
+  df_km <- rbind(data.frame(time = 0, surv = 1, group = group_name, type = "Kaplan-Meier"), df_km)
+  
+  # Wyznaczenie parametrów do ogona (t+ oraz S(t+))
+  # t+ to maksymalny czas z danych 
+  t_plus <- max(fit$time)
+  # S(t+) to ostatnia wartość estymatora KM
+  S_t_plus <- fit$surv[length(fit$surv)]
+  
+  # Generowanie siatki dla ogona (od t+ do max_x)
+  tail_grid <- seq(from = t_plus, to = max_x, length.out = 100)
+  
+  # Obliczenie wartości ogona naszą funkcją
+  tail_values <- brown_hollander_tail_func(tail_grid, t_plus, S_t_plus)
+  
+  df_tail <- data.frame(
+    time = tail_grid,
+    surv = tail_values,
+    group = group_name,
+    type = "Ogon (Brown-Hollander-Kowar)"
+  )
+  
+  return(list(km = df_km, tail = df_tail, t_plus = t_plus))
+}
+
+res_A <- get_km_with_tail(subset(dane, group == "Lek A"), "Lek A")
+res_B <- get_km_with_tail(subset(dane, group == "Lek B"), "Lek B")
+
+plot_data_km <- rbind(res_A$km, res_B$km)
+plot_data_tail <- rbind(res_A$tail, res_B$tail)
+
+ggplot() +
+  # Standardowy Kaplan-Meier 
+  geom_step(data = plot_data_km, aes(x = time, y = surv, color = group), size = 1) +
+  
+  # Ogony wykładnicze 
+  geom_line(data = plot_data_tail, aes(x = time, y = surv, color = group), size = 1) +
+  
+  # Dodatki wizualne
+  geom_vline(xintercept = 1.0, linetype = "dotted", color = "gray50") +
+  annotate("text", x = 1.05, y = 0.95, label = "t+ (Cenzurowanie)", hjust = 0, size = 3.5, color="gray40") +
+  
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  scale_x_continuous(limits = c(0, 3)) +
+  labs(
+    title = "Estymator Kaplana-Meiera z ogonami Browna, Hollandera i Kowara",
+    y = "Prawdopodobieństwo przeżycia S(t)",
+    x = "Czas",
+    color = "Grupa"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+
+Na początku może wydawać sie zastanawiające dlaczego widać tylko jeden ogon w przypadku tych danych, jednak jeśli jeszcze raz wrócimy do definicji tego jak liczona jest funkcja ogona, można zauważyć, że dane zaczynają być cenzuraowane w tym samym momencie $t^+$ oraz przyjmują tam taką samą wartość, przez co wychodzi, że mają taki sam paramert $\theta$, więc też taki sam ogon. Dlatego też na wykresie widać tylko jeden ogon, tuż pod nim znajduje się taki sam dla drugiego leku.
+
+## Czy estymator Kaplana-Meiera jest asmyptotycznie normalny?
+
+Na potrzeby zadania trzeba wybrać parametry uogólnionego rozkładu wykładniczego $\mathcal{GE}(\lambda,\alpha), \alpha \neq 1$, podczas gdy n = 30, 50, 100 i $t_0$ jest równe w przybliżeniu wartości oczekiwanej przyjętego rozkładu. Ja wybrałem wartości $\alpha = 2, \lambda = 1$, co za tym idzie $E[X] = 1.5$, więc $t_0 = 1.5$ no i oczywiście $2t_0 = 3$.
+
+
+```{r zadanie3l5 wartosci pomocniccze}
+#generator z poprzedniego sprawozdania
+generuj_dane_ge <- function(n, lambda, alfa) {
+  if (lambda <= 0 || alfa <= 0) {
+    stop("Parametry lambda i alfa muszą być dodatnie.")
+  }
+  u <- runif(n)
+  
+  t <- (-1 / lambda) * log(1 - u^(1 / alfa))
+  
+  return(t)
+}
+generuj_ge_cenzura_typ1 <- function(n, lambda, alfa, t0) {
+  pelne_czasy <- generuj_dane_ge(n, lambda, alfa)
+  
+  obserwowane_czasy <- pmin(pelne_czasy, t0)
+  
+  status <- as.integer(pelne_czasy <= t0)
+  
+  return(data.frame(czas = obserwowane_czasy, status = status))
+}
+
+lambda_val <- 1
+alpha_val <- 2
+# Obliczenie wartości oczekiwanej dla GE(1, 2)
+# E[X] = integral(1 - F(x)) dx = integral(1 - (1-e^-x)^2) dx = 1.5
+t0_val <- 1.5 
+t_tail_val <- 2 * t0_val # Punkt 2t0
+n_values <- c(30, 50, 100)
+M <- 1000
+
+# zmieniona pod zadanie funkcja estymująca wartość S(t) z ogonem Browna-Hollandera-Kowara
+get_bhk_estimate <- function(fit, t_eval, t_max) {
+  surv_prob <- summary(fit, times = t_max, extend = TRUE)$surv
+  
+  if (length(surv_prob) == 0) return(NA) 
+  
+  S_t_plus <- surv_prob
+  
+  if (t_eval <= t_max) {
+    return(S_t_plus)
+  } else {
+    tail_est <- exp((log(S_t_plus) / t_max) * t_eval)
+    return(tail_est)
+  }
+}
+```
+
+```{r symulacja}
+set.seed(123) 
+results_list <- list()
+
+for (n in n_values) {
+  vec_t0 <- numeric(M)
+  vec_2t0 <- numeric(M)
+  
+  for (i in 1:M) {
+    # Generowanie danych
+    dane <- generuj_ge_cenzura_typ1(n, lambda_val, alpha_val, t0_val)
+    
+    # Estymacja Kaplana-Meiera
+    fit <- survfit(Surv(czas, status) ~ 1, data = dane)
+    
+    # Maksymalny czas w danych cenzurowanych typu I to t0
+    
+    # Oszacowanie w punkcie t0 (zwykły KM)
+    vec_t0[i] <- get_bhk_estimate(fit, t0_val, t0_val)
+    
+    # Oszacowanie w punkcie 2*t0 (Ogon BHK)
+    vec_2t0[i] <- get_bhk_estimate(fit, t_tail_val, t0_val)
+  }
+  
+  # Zapisanie wyników dla danego n
+  temp_df <- data.frame(
+    Estimate = c(vec_t0, vec_2t0),
+    Point = rep(c("t0", "2t0"), each = M),
+    N = factor(n)
+  )
+  results_list[[as.character(n)]] <- temp_df
+}
+
+final_results <- bind_rows(results_list)
+```
+
+\newpage
+
+```{r histogramy zad3, fig.cap="Histogramy rozkładu oszacowań funkcji przeżycia", fig.pos="H"}
+# 5. Wizualizacja histogramów
+ggplot(final_results, aes(x = Estimate)) +
+  geom_histogram(bins = 22, fill = "steelblue", color = "white", alpha = 0.8) +
+  facet_grid(N ~ Point, scales = "free_y") +
+  labs(
+    title = "Rozkład oszacowań funkcji przeżycia (M = 1000)",
+    subtitle = "Metoda Kaplana-Meiera z ogonem Browna-Hollandera-Kowara",
+    x = "Wartość estymatora S(t)",
+    y = "Liczebność"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+
+
+Na podstawie uzyskanych histogramów możemy zasadnie przypuszczać, że estymator Kaplana-Meiera (oraz jego rozszerzenie metodą Browna-Hollandera-Kowara) posiada własność asymptotycznej normalności zarówno w punkcie $t_0$ jak i $2t_0$.
+
+Analizując histogramy dla rosnących liczebności próby (n=30,50,100), dostrzegamy charakterystyczne cechy zbieżności asymptotycznej do rozkładu normalnego:
+
+ - Symetria: Rozkłady oszacowań w obu punktach układają się prawie symetrycznie wokół wartości centralnej, przyjmując kształt krzywej dzwonowej (krzywej Gaussa).
+
+ - Koncentracja: Wraz ze wzrostem n, rozrzut wartości (wariancja) maleje, a histogramy stają się "smuklejsze", co świadczy o zgodności estymatora i zmniejszaniu się błędu standardowego.
+ 
+ - Zjawisko to jest widoczne nie tylko dla standardowego estymatora w punkcie $t_0$, ale również dla estymowanego ogona w punkcie $2t_0$, co sugeruje, że własność normalności jest zachowana także po transformacji przedłużającej krzywą przeżycia.
+
+# Estymacja średniego czasu życia
+
+## Program do estymacji średniego czasu życia
+
+Program obejmuje możliwość wyboru typu estymatora, jednak domyślnie korzystamy z estymatora Kaplana-Meiera, w drugiej części rozdziału, gdzie liczę estymację na konkretnym przykładzie używam też estymatoru Fleminga-Harringtona. Dodatkową jest też możliwość wyboru, czy chcemy estymować wraz czy bez "ogona" Browna, Hollandera i Kowara. Domyślnie ustawione jest TRUE, co oznacza estymację wartości wliczając "ogon", z kolei FALSE implikuje estymację bez "ogona".
+
+```{r estymaor sredniego czsu zycia, echo=TRUE}
+estimate_mean_survival <- function(time, status, type = "kaplan-meier", tail = TRUE) {
+  
+  #  Dopasowanie modelu
+  fit <- survfit(Surv(time, status) ~ 1, type = type)
+  
+  times <- fit$time
+  surv_probs <- fit$surv
+  
+  # Dodaje punkt startowy t=0, S(0)=1
+  t_vec <- c(0, times)
+  s_vec <- c(1, surv_probs)
+  
+  # Parametry ostatniego punktu
+  t_plus <- max(times)
+  s_t_plus <- surv_probs[length(surv_probs)]
+  
+  # Pole pod krzywą empiryczną (od 0 do t+)
+  area_observed <- sum(diff(t_vec) * s_vec[-(length(s_vec))])
+  
+  # Ogon 
+  area_tail <- 0
+  
+  # Liczymy ogon tylko jeśli tail = TRUE
+  # ORAZ jeśli krzywa nie zeszła do zera (s_t_plus > 0)
+  if (tail && s_t_plus > 0) {
+    
+    log_s <- log(s_t_plus)
+    
+    # Zabezpieczenie przed dzieleniem przez zero (gdyby S(t+)=1)
+    if (log_s == 0) {
+      warning("S(t+) = 1. Nie można wyznaczyć ogona wykładniczego (średnia nieskończona).")
+      return(Inf)
+    }
+    
+    theta <- -log_s / t_plus 
+    
+    # Pole pod ogonem wykładniczym od t+ do nieskończoności
+    area_tail <- s_t_plus / theta
+  }
+  
+  # Suma pola
+  mean_survival <- area_observed + area_tail
+  
+  return(mean_survival)
+}
+```
+
+
+## Działanie programu na przykładzie Lek A, Lek B
+
+Wyniki poniższej tabelki przedstawiają działanie powyższego programu na podstawie przykładu z pierwszego rozdziału Lek A i Lek B
+
+```{r estymaor na danych}
+
+# 2. Dane (Twoje dane wejściowe)
+czasy_A_zdarzenia <- c(0.03345514, 0.08656403, 0.08799947, 0.24385821, 
+                       0.27755032, 0.40787247, 0.58825664, 0.64125620, 
+                       0.90679161, 0.94222208)
+czasy_A_cenz <- rep(1.0, 10)
+time_A <- c(czasy_A_zdarzenia, czasy_A_cenz)
+status_A <- c(rep(1, 10), rep(0, 10))
+
+czasy_B_zdarzenia <- c(0.03788958, 0.12207257, 0.20319983, 0.24474299, 
+                       0.30492413, 0.34224462, 0.42950144, 0.44484582, 
+                       0.63805066, 0.69119721)
+czasy_B_cenz <- rep(1.0, 10)
+time_B <- c(czasy_B_zdarzenia, czasy_B_cenz)
+status_B <- c(rep(1, 10), rep(0, 10))
+
+
+# Lek A
+a_km_bez <- estimate_mean_survival(time_A, status_A, "kaplan-meier", FALSE)
+a_km_ogon <- estimate_mean_survival(time_A, status_A, "kaplan-meier", TRUE)
+a_fh_bez <- estimate_mean_survival(time_A, status_A, "fleming-harrington", FALSE)
+a_fh_ogon <- estimate_mean_survival(time_A, status_A, "fleming-harrington", TRUE)
+
+# Lek B
+b_km_bez <- estimate_mean_survival(time_B, status_B, "kaplan-meier", FALSE)
+b_km_ogon <- estimate_mean_survival(time_B, status_B, "kaplan-meier", TRUE)
+b_fh_bez <- estimate_mean_survival(time_B, status_B, "fleming-harrington", FALSE)
+b_fh_ogon <- estimate_mean_survival(time_B, status_B, "fleming-harrington", TRUE)
+
+# Składanie ramki danych
+tabela_prosta <- data.frame(
+  Grupa = c("Lek A", "Lek B"),
+  `KM (z ogonem)`  = c(a_km_ogon, b_km_ogon),
+  `FH (z ogonem)`  = c(a_fh_ogon, b_fh_ogon),
+  check.names = FALSE
+)
+
+# 4. Wyświetlenie
+kable(tabela_prosta, digits = 3, caption = "Średni czas przeżycia (Estymatory KM i FH)")
+
+```
+
+Dla obu grup lekowych wartości uzyskane za pomocą estymatora Fleminga-Harringtona (FH) są wyższe niż wartości uzyskane estymatorem Kaplana-Meiera (KM). To oczywiście pokrywa się z teorią, ponieważ rzeczywiście $\tilde{S}(t) \geq \widehat{S}(t)$, gdzie oczywiście $\tilde{S}$ estymator FH, a $\widehat{S}$ estymator KM. Warto jednak też zauważyć, że mimo tego dla obydwu estymatorów wartości średniego czasu życia zachowują podobną różnicę (różnica między lekiem A, a lekiem B).
+
+\newpage
+
+# Przedział ufności dla danych cenzurowanych losowo
+
+## Program obliczający przedział ufności
+
+Poniższa funkcja oblicza dolną i górną granicę przedziału ufności dla wartości średniej czasu życia na poziomie ufności 1 - $\alpha$.
+
+Główne wzory, z których korzystam to:
+
+1. Szacowanie $\mu$ przez:
+
+$$\hat{ \mu_{\tau}} = \int \limits_0^\tau \widehat{S}(t) dt $$
+2. Szacowanie wariancji estymatora $\hat{ \mu_{\tau}}$:
+
+$$ \widehat{V}(\hat{ \mu_{\tau}}) = \displaystyle\sum_{i=1}^{D} \left[ \int \limits_{s_i}^\tau \widehat{S}(t) dt \right]^2 \frac{d_i}{r_i(r_i - d_i)}$$
+gdzie D jest liczbą danych niecenzurowanych, $s_i$, i = 1,...,D.
+
+3. Dolna granica przedziału ufności $T_L$:
+
+$$ T_L = \hat{ \mu_{\tau}} - z(1 - \alpha /2) \sqrt{\widehat{V}(\hat{ \mu_{\tau}})}$$
+
+4. Górna granica przedziału ufności $T_U$:
+
+$$ T_U = \hat{ \mu_{\tau}} + z(1 - \alpha /2) \sqrt{\widehat{V}(\hat{ \mu_{\tau}})}$$
+
+```{r program do przedziału ufnosci, echo=TRUE}
+oblicz_przedzial_sredniej <- function(time, status, alpha, tau) {
+  
+  # Dopasowanie modelu
+  fit <- survfit(Surv(time, status) ~ 1)
+  
+  times <- fit$time
+  n.risk <- fit$n.risk
+  n.event <- fit$n.event
+  surv <- fit$surv
+  
+  # Dodaje punkt t=0, S(0)=1
+  t_full <- c(0, times)
+  S_full <- c(1, surv)
+  
+  # Siatka czasowa do całkowania
+  time_points <- sort(unique(c(t_full[t_full < tau], tau)))
+  areas <- numeric(length(time_points) - 1)
+  
+  # Całkowanie numeryczne 
+  for(j in 1:(length(time_points) - 1)) {
+    t_start <- time_points[j]
+    t_end <- time_points[j+1]
+    idx <- findInterval(t_start, t_full)
+    current_S <- S_full[idx]
+    areas[j] <- current_S * (t_end - t_start)
+  }
+  # wzór 1
+  mu_tau <- sum(areas)
+  
+  # wzór 2
+  variance_sum <- 0
+  for(i in 1:length(times)) {
+    if(n.event[i] > 0 && times[i] < tau) {
+      t_event <- times[i]
+      r_i <- n.risk[i]
+      d_i <- n.event[i]
+      
+      relevant_indices <- which(time_points[1:(length(time_points)-1)] >= t_event)
+      integral_val <- sum(areas[relevant_indices])
+      
+      if((r_i - d_i) > 0) {
+        term <- (integral_val^2) * (d_i / (r_i * (r_i - d_i)))
+        variance_sum <- variance_sum + term
+      }
+    }
+  }
+  hat_V_mu <- variance_sum
+  
+  # wzory 3 i 4
+  z_score <- qnorm(1 - alpha/2)
+  sd_mu <- sqrt(hat_V_mu)
+  
+  # zwracamie wyników
+  return(list(
+    tau = tau,
+    srednia = mu_tau,      
+    wariancja = hat_V_mu,
+    CI_dolne = mu_tau - z_score * sd_mu, 
+    CI_gorne = mu_tau + z_score * sd_mu  
+  ))
+}
+```
+
+## Działanie programu na przykładzie
+
+Dane biorę z badania przeprowadzonego przez Mayo Clinic, obejmującym pacjentki z rakiem jajnika w stadium II lub IIIA, głównym celem było ustalenie, czy stopień zaawansowania choroby był związany z cza sem do progresji choroby. W przypadku pacjentek z niskim stopniem zaawansowania choroby czasy (w dniach) do progresji choroby były następujące: 28, 89, 175, 195, 309, 377+, 393+, 421+, 447+, 462, 709+, 744+, 770+, 1106+ ,1206+. Czasy do progresji choroby pacjentek z nowotworem o wysokim stopniu zaawansowania choroby były następujące 34, 88, 137, 199, 280, 291, 299+, 300+, 309, 351, 358, 369, 369, 370, 375, 382, 392, 429+, 451, 1119+ dni. 
+
+Na podstawie powyższych danych i programu, wyznacze przedziały ufności na poziomie ufności 0.95, dla średniego czasu do progresji choroby w dwóch badanych grupach pacjentek dla dwóch $\tau$.
+Wybrałem wartości 400 i 1100. 400 ponieważ jest to czas obejmujący większość zdarzeń jednocześnie pozwala porównać dynamikę choroby w pierwszym najbardziej lrytycznym roku. 1100 ponieważ Jest to wartość bliska maksymalnemu czasowi obserwacji w obu grupach, co pozwala ocenić długoterminowy zysk z posiadania niższego stopnia zaawansowania nowotworu.
+
+```{r test programu na przkałdzie}
+# Niski stopień
+time_low <- c(28, 89, 175, 195, 309, 377, 393, 421, 447, 462, 709, 744, 770, 1106, 1206)
+status_low <- c(1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0)
+
+# Wysoki stopień
+time_high <- c(34, 88, 137, 199, 280, 291, 299, 300, 309, 351, 358, 369, 369, 370, 375, 382, 392, 429, 451, 1119)
+status_high <- c(1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)
+
+alpha <- 0.05
+
+
+
+# Tau = 400
+res_low_400 <- oblicz_przedzial_sredniej(time_low, status_low, alpha, 400)
+res_high_400 <- oblicz_przedzial_sredniej(time_high, status_high, alpha, 400)
+
+# Tau = 1100
+res_low_1100 <- oblicz_przedzial_sredniej(time_low, status_low, alpha, 1100)
+res_high_1100 <- oblicz_przedzial_sredniej(time_high, status_high, alpha, 1100)
+
+wyniki <- data.frame(
+  Grupa = c("Niski stopień", "Wysoki stopień", "Niski stopień", "Wysoki stopień"),
+  Tau = c(400, 400, 1100, 1100),
+  
+  Srednia = c(res_low_400$srednia, res_high_400$srednia, 
+              res_low_1100$srednia, res_high_1100$srednia),
+  
+  CI_Dolne = c(res_low_400$CI_dolne, res_high_400$CI_dolne, 
+               res_low_1100$CI_dolne, res_high_1100$CI_dolne),
+  
+  CI_Gorne = c(res_low_400$CI_gorne, res_high_400$CI_gorne, 
+               res_low_1100$CI_gorne, res_high_1100$CI_gorne),
+  
+  check.names = FALSE
+)
+kable(wyniki, 
+      digits = 2, 
+      caption = "Realizacje przedziałów ufności (95%) dla średniego czasu do progresji choroby")
+```
+
+Dla $\tau = 400$ widzimy, że przedziały niemal całkowicie się pokrywają (średnie 320 vs 312). W horyzoncie czasowym 400 dni różnica między grupami nie jest jeszcze statystycznie istotna – obie grupy "tracą" pacjentki w podobnym tempie na początku.
+
+Dla $\tau = 1100$ średni czas do progresji w grupie Niski stopień jest prawie dwukrotnie dłuższy niż w grupie Wysoki stopień (716 vs 378 dni). Minimalna część wspólna przedziałów ufności również świadczy o tym jak te grupy się różnią w dłuższym okresie czasu.
+
+\newpage
+
+# Porównanie testów w analizie czasu do progresji choroby
+
+## Porównanie wartości poziomów krytynczych (wartości p)
+
+Korzystając z testów log-rank, Gehana-Breslowa, Tarone’a-Warego, Peto-Peto na poziomie istotności 0.05 zweryfikuję hipotezę o jednakowym rozkładzie czasu do progresji choroby w dwóch badanych grupach pacjentek oraz porównam wartości poziomów krytycznych (wartość p).
+
+
+```{r zadanie 8 dum dum dum}
+time_low <- c(28, 89, 175, 195, 309, 377, 393, 421, 447, 462, 709, 744, 770, 1106, 1206)
+status_low <- c(1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0)
+group_low <- rep("Low", length(time_low))
+
+time_high <- c(34, 88, 137, 199, 280, 291, 299, 300, 309, 351, 358, 369, 369, 370, 375, 382, 392, 429, 451, 1119)
+status_high <- c(1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)
+group_high <- rep("High", length(time_high))
+
+data <- data.frame(
+  time = c(time_low, time_high),
+  status = c(status_low, status_high),
+  group = factor(c(group_low, group_high))
+)
+
+# Wykonanuje testy przy użyciu pakietu 'coin'
+# Pakiet ten pozwala na dokładne specyfikowanie typu wag:
+
+# type = "Logrank" (wagi = 1)
+test_lr_coin <- logrank_test(Surv(time, status) ~ group, data = data, type = "logrank")
+p_lr <- pvalue(test_lr_coin)
+
+# type = "Gehan-Breslow" (wagi = n_i - liczba narażonych)
+test_gb_coin <- logrank_test(Surv(time, status) ~ group, data = data, type = "Gehan-Breslow")
+p_gb <- pvalue(test_gb_coin)
+
+# type = "Tarone-Ware" (wagi = sqrt(n_i))
+test_tw_coin <- logrank_test(Surv(time, status) ~ group, data = data, type = "Tarone-Ware")
+p_tw <- pvalue(test_tw_coin)
+
+# type = "Peto-Peto" (wagi = S(t))
+test_pp_coin <- logrank_test(Surv(time, status) ~ group, data = data, type = "Peto-Peto")
+p_pp <- pvalue(test_pp_coin)
+
+
+wyniki_tabela <- data.frame(
+  Test = c("Log-Rank", "Tarone-Ware", "Gehan-Breslow", "Peto-Peto"),
+  p_value = c(p_lr, p_tw, p_gb, p_pp)
+)
+```
+
+
+
+```{r tabela testów }
+
+kable(wyniki_tabela, digits = 5, caption = "Wyniki testów")
+
+```
+
+Otrzymane wyniki wskazują na ciekawą rozbieżność: test Log-Rank wykazał istotną różnicę, podczas gdy pozostałe testy (zwłaszcza Gehan-Breslow) jej nie wykazały. Wynika to z różnych funkcji wagowych stosowanych przez te testy oraz rozkładu zdarzeń w czasie.
+
+**Decyzje statystyczne:**
+
+ -  **Test Log-Rank** (p $\approx$ 0.0194), odrzucamy hipotezę zerową, więc istnieje statystyczna różnica w czasie do progresji między grupami. Waga = 1 : Traktuje każde zdarzenie (progresję) tak samo, niezależnie od tego, czy wystąpiło na początku, czy pod koniec badania.
+ 
+ - **Test Tarone-Ware** (p $\approx$ 0.0552), nie ma podstaw do odrzucenia $H_0$, więc różnica nie jest istotna statystycznie na zadanym poziomie, choć wynik jest graniczny. Waga = $\sqrt{n_i}$ : Jest "kompromisem" między Log-Rank a Gehanem.
+ 
+ - **Test Gehan-Breslow** (p $\approx$ 0.0978), nie ma podstaw do odrzucenia $H_0$. Waga = $n_i$  liczba narażonych: Przypisuje bardzo duże wagi zdarzeniom początkowym (gdy n jest duże) i marginalizuje zdarzenia późniejsze.
+ 
+ - **Test Peto-Peto** (p $\approx$ 0.1336), nie ma podstaw do odrzucenia $H_0$. Waga = S(t): Podobnie jak Gehan, przykłada większą wagę do wcześniejszych zdarzeń, gdy prawdopodobieństwo przeżycia jest wysokie.
+
+
+Najbardziej adekwatnym testem w tej sytuacji wydaje się Log-Rank, ponieważ różnica w rokowaniu między grupami ujawnia się w pełni w dłuższym horyzoncie czasowym, a nie natychmiast po diagnozie, ale wykresy w ostatnim podrozdziale tego sprawozdania dopriero pokażą jak dokładnie to wygląda.
+
+## Wykresy K-M funkcji przeżycia dla czasu do progresji choroby oraz funkcji wagowych w statystykach testowych
+
+Celem niniejszej części analizy jest wizualna ocena przebiegu procesu chorobowego w obu badanych grupach oraz zrozumienie mechanizmu działania zastosowanych testów statystycznych. W tym celu sporządzono dwa wykresy:
+
+ - Wykres estymatorów Kaplana-Meiera, który pozwala ocenić prawdopodobieństwo braku progresji choroby w czasie S(t) dla pacjentek z niskim (Low) i wysokim (High) stopniem zaawansowania nowotworu.
+ 
+ - Wykres znormalizowanych funkcji wagowych ($V_i$), który ilustruje, jak poszczególne testy (Log-Rank, Gehan-Breslow, Tarone-Ware, Peto-Peto) ważą obserwacje w kolejnych momentach czasowych, zgodnie z relacją $V_i = \frac{w_i}{\sum_{i=1}^{n} w_i}, \sum_{i=1}^n V_i = 1$.
+
+\newpage
+
+```{r wykres 8, fig.cap="Estymatory K-M dla grup z niskim (Low) i wysokim (High) stopniem zaawansowania choroby"}
+fit_km <- survfit(Surv(time, status) ~ group, data = data)
+
+km_data <- data.frame(
+  time = fit_km$time,
+  surv = fit_km$surv,
+  group = c(rep("High", fit_km$strata["group=High"]), 
+            rep("Low", fit_km$strata["group=Low"]))
+)
+
+ggplot(km_data, aes(x = time, y = surv, color = group)) +
+  geom_step(size = 1.2) +
+  scale_color_manual(values = c("red", "blue")) +
+  theme_minimal() +
+  labs(title = " Estymatory Kaplana-Meiera",
+       x = "Czas (dni)", y = "S(t) - Prawdopodobieństwo przeżycia") +
+  theme(legend.position = "top")
+```
+
+Na podstawie wygenerowanego wykresu estymatorów Kaplana-Meiera można zaobserwować następującą dynamikę zjawiska:
+
+ - Początkowa faza badania (0 – 300 dni): W początkowym okresie krzywe przeżycia dla obu grup przebiegają bardzo blisko siebie, często się przecinając lub nakładając. Oznacza to, że we wczesnym etapie po diagnozie ryzyko progresji choroby jest zbliżone dla obu grup pacjentek, niezależnie od stopnia zaawansowania.
+ 
+ - Faza środkowa i późna (powyżej 300 dni): Następuje wyraźna dywergencja (rozjeżdżanie się) krzywych. Krzywa dla grupy o wysokim stopniu zaawansowania ("High" – linia czerwona) gwałtownie opada, co wskazuje na szybką progresję choroby u tych pacjentek. W tym samym czasie grupa o niskim stopniu zaawansowania ("Low" – linia niebieska) charakteryzuje się znacznie stabilniejszym przebiegiem i wyższym prawdopodobieństwem braku progresji.
+
+
+Różnica w rokowaniu między grupami nie jest stała w czasie – ujawnia się ona w pełni dopiero w dalszym etapie obserwacji.
+
+\newpage
+
+```{r wykres testów, fig.cap="Przebieg znormalizowanych wag przypisywanych zdarzeniom przez poszczególne testy statystyczne"}
+
+#  Obliczamy statystyki dla całej próby 
+fit_pooled <- survfit(Surv(time, status) ~ 1, data = data)
+
+weights_df <- data.frame(
+  time = fit_pooled$time,
+  n_risk = fit_pooled$n.risk,
+  n_event = fit_pooled$n.event
+) %>% filter(n_event > 0)
+
+# Kolega podpowiedział mi, że wzór na S_tilde wg wzoru z wykładu  jest troche inny niż normlany w przypadku testu peto-peto (r_j + 1 w mianowniku), więc zmieniłem to też w kodzie mimo, że na wykresie robi to minimalną różnicę
+weights_df$surv_peto_theory <- cumprod(1 - (weights_df$n_event / (weights_df$n_risk + 1)))
+
+# Obliczam sumy do normalizacji
+sum_LR     <- nrow(weights_df)
+sum_Gehan  <- sum(weights_df$n_risk)
+sum_Tarone <- sum(sqrt(weights_df$n_risk))
+sum_Peto   <- sum(weights_df$surv_peto_theory) 
+
+#  Normalizacja
+weights_df <- weights_df %>%
+  mutate(
+    LR = 1 / sum_LR,
+    Gehan = n_risk / sum_Gehan,
+    Tarone = sqrt(n_risk) / sum_Tarone,
+    Peto = surv_peto_theory / sum_Peto 
+  ) %>%
+  filter(time <= 600)
+
+# Formatowanie do wykresu
+weights_long <- weights_df %>%
+  select(time, LR, Gehan, Tarone, Peto) %>%
+  pivot_longer(cols = -time, names_to = "Test", values_to = "Waga")
+
+# LR - Żółty, Tarone - Różowy, Gehan - Niebieski, Peto - Pomarańczowy
+ggplot(weights_long, aes(x = time, y = Waga, color = Test)) +
+  geom_line(size = 1.5) + 
+  scale_color_manual(values = c(
+    "Gehan" = "blue",  
+    "LR" = "gold",    
+    "Peto" = "green",   
+    "Tarone" = "red"  
+  )) +
+  
+  geom_hline(yintercept = 0.05, linetype="dotted", color="white") +
+  annotate("text", x=50, y=0.055, label="0.05 (Log-Rank)", size=3) +
+  
+  labs(title = "Znormalizowane Funkcje Wagowe",
+       x = "Czas (t)", 
+       y = "Waga znormalizowana (Vi)") +
+  theme(legend.position = "right")
+
+```
+
+Test Log-Rank: Funkcja wagowa jest stała i przyjmuje niskie wartości (znormalizowana waga = 0.05). Wynika to z faktu, że waga surowa w tym teście wynosi W(t)=1. Oznacza to, że test ten traktuje każde zdarzenie (progresję) tak samo ważnie, niezależnie od momentu jego wystąpienia.
+
+Test Gehana-Breslowa: Funkcja ta startuje z najwyższego poziomu i gwałtownie spada. Jest to zgodne z teorią, gdzie waga zależy od liczby osób narażonych ($n_i$). Test ten nadaje ogromne znaczenie zdarzeniom wczesnym, a marginalizuje zdarzenia późne.
+
+Test Peto-Peto (linia zielona): Funkcja wagowa oparta na estymatorze przeżycia $\tilde{S}(t)$ również ma charakter malejący, co sprawia, że test ten jest bardziej czuły na różnice na początku badania niż na jego końcu.
+
+Test Tarone-Ware (linia czerwona): Przebiega pomiędzy wykresem Gehana a Log-Rankiem, stanowiąc kompromis (waga $\sqrt{n_i}$)
+
+### Wnioski końcowe: Związek funkcji wagowych z wartościami p
+
+Test Log-Rank jako jedyny wykazał istotność statystyczną na poziomie 0.05, ponieważ dzięki stałej funkcji wagowej, test ten w pełni uwzględnił zdarzenia występujące w późniejszej fazie badania (po 150. dniu), gdzie różnica między krzywymi KM była największa. Nie "ukarał" danych za to, że różnica pojawiła się późno.
+
+Test Gehana-Breslowa Nie wykazał istotności statystycznej (najwyższa wartość p), ponieważ Jego funkcja wagowa drastycznie spadła w momencie, gdy krzywe KM zaczęły się rozchodzić. Test ten "skupił się" na początkowym okresie (0-150 dni), gdzie – jak zauważono w analizie wykresu KM – różnice między grupami były minimalne.
+
+Testy Peto-Peto i Tarone-Ware stanowią warianty pośrednie. Tarone-Ware, spadając wolniej niż Gehan, był bliski wykrycia istotności (0.055), ale ze względu na charakter malejący wag, nie osiągnął poziomu 0.05 tak pewnie jak Log-Rank.
+
+**Konkluzja:** W badanym przypadku, gdzie założenie o proporcjonalnym hazardzie może być zaburzone przez opóźniony efekt różnicowania się grup, testy silnie ważące początek badania (Gehan, Peto) tracą moc testową. Najbardziej adekwatnym testem, który poprawnie zidentyfikował istotną klinicznie różnicę w dalszym przebiegu choroby, okazał się test Log-Rank.
