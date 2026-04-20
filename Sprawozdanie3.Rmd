@@ -1,0 +1,1349 @@
+---
+title: "Sprawozdanie 3"
+author: "Tadeusz Jagniewski"
+date: "2026-01-31"
+header-includes:
+  - \usepackage{fontspec}               
+  - \usepackage{polyglossia}           
+  - \setdefaultlanguage{polish}
+  - \usepackage{amsmath,amssymb,mathtools}
+  - \usepackage{graphicx}
+  - \usepackage{float}
+  - \usepackage{booktabs}               
+  - \usepackage{longtable}              
+  - \usepackage{array}                  
+  - \usepackage{multirow}               
+  - \usepackage{caption}                
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    fig_caption: yes
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(survival)
+library(tibble)
+library(tidyr)
+library(stringr)
+library(broom)
+library(survRM2)
+library(ggplot2)
+library(survminer)
+library(timereg)
+library(gridExtra)
+library(fic)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, dev = "cairo_pdf")
+options(scipen = 999)
+```
+
+# Lista 9
+
+
+Sprawozdanie dotyczy analizy danych lung dostępnych w pakiecie survival. Dane dotyczą pacjentów z zaawansowanym rakiem płuc.
+
+## Zadanie 1
+
+W tym zadaniu trzeba było oszacować parametry modelu przyspieszonego czasu awarii, przyjmując za zmienną zależną zmienną *time*, a za charakterystyki zmienne: *age*, *sex*, *ph.ecog*, *ph.karno*.
+
+Aby to osiągnąć wybrałem powyższe 5 kolumn oraz oczywiście kolumnę status, następnie usuwam wiersze z brakującymi danymi, centruję zmienne ciągłe czyli *age*, *ph.karno*, a zmienne *sex* i *ph.ecog* faktoryzuje. Finalnie używam funkcji *survreg* z pakietu *survival*, aby oszacować parametry. A oto wyniki jakie otrzymałem:
+
+
+
+
+```{r danelung}
+data(lung)
+
+zmienne <- c("time", "status", "age", "sex", "ph.ecog", "ph.karno")
+dane <- lung[, zmienne]
+
+dane <- na.omit(dane)
+
+mean_age <- mean(dane$age)
+mean_karno <- mean(dane$ph.karno)
+age_c <- 70 - mean_age
+karno_c <- 90 - mean_karno
+
+dane$age_centered <- dane$age - mean(dane$age)
+dane$ph.karno_centered <- dane$ph.karno - mean(dane$ph.karno)
+
+fit_aft <- survreg(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) + 
+                   age_centered + ph.karno_centered, 
+                   data = dane, 
+                   dist = "weibull")
+
+
+tabela_wspolczynnikow <- data.frame(Wartosc = fit_aft$coefficients)
+
+nowe_nazwy <- c(
+  "Intercept",       
+  "sex",  
+  "ph.ecog1",          
+  "ph.ecog2",          
+  "ph.ecog3",        
+  "age",            
+  "ph.karno"       
+)
+
+rownames(tabela_wspolczynnikow) <- nowe_nazwy
+
+kable(tabela_wspolczynnikow, 
+      digits = 3, 
+      caption = "Oszacowane parametry modelu AFT",
+      col.names = c("Współczynnik"))
+```
+
+
+## Zadanie 2
+
+### Intercept
+
+Jest to "bazowy czas życia pacjenta referencyjnego", którego wszystkie zmienne wynoszą 0 (mężczyzna, ecog0, wiek i Karnofsky są równe średniej z próby, ponieważ dane były centrowane).
+
+Wartość według współczynnika wynosi $e^{6.301} \approx 545$ dni.
+
+### sex 
+
+Płeć ma rzeczywisty wpływ na czas życia ponieważ współczynnik wynosi około 0,408 co wstawiając do współczynnika przyspieszenia daje $e^{0.408} \approx 1,5$. Z tego można wywnioskować, iż kobiety (sex = 2) mają średnio o 50% dłuższy czas przeżycia w porównaniu do mężczyzn (sex = 1).
+
+### ecog
+
+Ecog to międzynarodowa skala oceny sprawności pacjentów, używana głównie w onkologii do określenia ich ogólnego stanu, zdolności do codziennych czynności i tolerancji na leczenie, klasyfikująca pacjentów w 6 stopniach (0-5), gdzie 0 oznacza pełną sprawność, a 5 zgon. 
+
+1. ecog 0 vs 1:
+ - współczynnik $\approx -0.442$
+ - TR: $e^{-0.442} \approx 0.66$
+ - Pacjenci z ecog 1 mają czas przeżycia skrócony do 66% czasu przeżycia pacjentów z ECOG 0 (czyli żyją o około 34% krócej).
+ 
+ 2. ecog 0 vs 2:
+  - Współczynnik: $\approx -0.926$
+  - TR: $e^{-0.926} \approx 0.40$
+  - Pacjenci z ecog 2 mają czas przeżycia skrócony do 40% czasu przeżycia pacjentów z ECOG 0 (czyli żyją o około 60% krócej).
+  
+ 3. ecog 0 vs 3:
+  - Współczynnik: $\approx -1.687$
+  - TR: $e^{-1.687} \approx 0.19$
+  - Pacjenci z ecog 3 mają czas przeżycia skrócony do 19% czasu przeżycia pacjentów z ECOG 0 (czyli żyją o około 81% krócej).
+  
+  
+### age
+
+
+Współczynnik age wyniósł około -0,009 więc współczynnik przyspieszenia wynosi $e^{-0.009} \approx 0.991$, co oznacza że każdy kolejny rok życia skraca oczekiwany czas przeżycia o około 0,9%. Wiek ma negatywny wpływ na czas przeżycia jednak w porówaniu do innych czynników jego znaczenie jest znacznie łagodniejsze.
+
+### karno
+
+Skala Karnofsky'ego wykazała się współczynnikiem na poziomie -0,01, co w przeliczeniu na współczynnik przyspieszenia daje $e^{-0.01} \approx 0.99$, więc można wywnioskować, że wzrost wskaźnika Karnofsky'ego o jeden punkt skraca średni czas życia o około 1%.
+
+## Zadanie 3
+
+W tym zadaniu musiałem wyznaczyć oszacowanie funkcji przeżycia (w dniach) odpowiadającej rozkładowi czasu życia kobiety w wieku 70 lat o charakterystyce ph.ecog=1 i ph.karno=90 i na podstawie uzyskanego oszacowania obliczyć szac wane prawdopodobieństwo, że czas życia tej kobiety będzie większy niz 300 dni. Zrobiłem to zadaeia za pomocą poniższego kodu: 
+
+
+```{r sredniczas zycia300, echo=TRUE}
+z1 <- c(1,1,1,0,0,70 - mean_age,90 - mean_karno)
+
+mu <- fit_aft$coef[1]
+sigma <- fit_aft$scale
+alpha  <- 1/sigma
+lambda <- exp(-mu/sigma)
+
+t <- 300
+
+beta_aft <- fit_aft$coef[-1] 
+z_cov <- z1[-1]           
+
+S_t_z <- exp( - lambda * exp( -alpha * sum(beta_aft * z_cov) ) * t^alpha )
+
+```
+
+Oszacowane prawdopodobieństwo, że czas życia tej kobiety będzie większy niż 300 dni wynosi około `r round(S_t_z, 5)*100`%.
+
+
+## Zadanie 4 
+
+W tym zadaniu trzeba było narysować wykres do poprzedniego zadania, który będzie obrazował prawdopodobieństwo że ta kobieta przeżyła więcej niż x dni, oczywiście x będzie argumentem, a wartości będę mu przypisywał korzystając z funkcji przeżycia S(t) analogicznie jak w poprzednim zadaniu tylko, że nie dla jednej wartości , a przedziału od 0 do 1000.
+
+\newpage
+
+```{r wykres, fig.cap="Oszacowana funkcja przeżycia (Kobieta, 70 lat, ECOG=1, Karno=90)"}
+funkcja_przezycia <- function(t) {
+  exp( - lambda * exp( -alpha * sum(beta_aft * z_cov) ) * t^alpha )
+}
+
+t0 <- 300
+S_t <- funkcja_przezycia(t0)
+
+curve(funkcja_przezycia(x),
+      from = 0,
+      to = 1000,
+      col = "blue",
+      lwd = 2,
+      ylim = c(0, 1),
+      ylab = "Prawdopodobieństwo przeżycia S(t|z)",
+      xlab = "Czas (dni)",
+      main = "Oszacowana funkcja przeżycia\n(Kobieta, 70 lat, ecog=1, karno=90)")
+
+grid()
+
+points(x = t0, y = S_t, pch = 19, col = "red")
+text(x = t0, y = S_t, labels = paste("S(300) =", round(S_t, 3)), pos = 4, col = "red")
+
+legend("topright",
+       legend = "Krzywa przeżycia",
+       col = "blue",
+       lty = c(1, NA),
+       pch = c(NA, 19))
+```
+
+
+Na wykresie ładnie widać, że z biegiem czasu prawdobodobieństwo przeżycia spada, do takiego stopnia, że prawdobodobieństwo przeżycia więcej niż 1000 dni jest bardzo małe i wynosi mniej niż 10%.
+
+
+## Zadanie 5 
+
+W tym zadaniu trzeba znowu oszcaować parametry modelu, znowu dla tych samych zmiennych, ale tym razem modelem PH (proporcjonalne hazardy). Coś, co różni dodatkowo tą tableke od poprzedniej to to, że tym razem jest *sex*=2 (Kobieta), a nie 1 (Mężczyzna) jak w poprzedniej.
+
+```{r}
+library(eha)
+
+ph_fit <- phreg(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) + 
+                age_centered + ph.karno_centered, 
+                data = dane, 
+                dist = "weibull")
+
+
+wszystkie_wspolczynniki <- ph_fit$coefficients
+
+wspolczynniki_zmienne <- wszystkie_wspolczynniki[1:6]
+
+tabela_wspolczynnikow <- data.frame(Wartosc = wspolczynniki_zmienne)
+
+nowe_nazwy <- c(
+  "sex=2",        
+  "ph.ecog 1",
+  "ph.ecog 2",
+  "ph.ecog 3",
+  "age",
+  "ph.karno"
+)
+
+rownames(tabela_wspolczynnikow) <- nowe_nazwy
+
+kable(tabela_wspolczynnikow, 
+      digits = 3, 
+      caption = "Oszacowane parametry modelu PH (Współczynniki zmiennych)",
+      col.names = c("Współczynnik"))
+
+```
+
+
+## Zadanie 6
+
+W tym zadaniu należy zinterpretować współczynniki z zadania 5 podobnie jak w zadaniu 2. W tym modelu (w przeciwieństwie do poprzedniego modelu AFT) interpretujemy wpływ zmiennych na ryzyko zgonu (hazard), a nie bezpośrednio na czas.
+
+### sex 
+
+Kobiety mają współczynnik równy -0.567, co daje iloraz ryzyka $e^{-0.567} \approx 0.57$, co oznacza, że ryzyko zgonu u kobiet stanowi około 57% ryzyka zgonu u mężczyzn (przy tych samych pozostałych parametrach).
+
+### encog
+
+1. ecog 0 vs 1:
+ - współczynnik $\approx 0.585$
+ - TR: $e^{0.585} \approx 1.8$
+ - Pacjenci z ecog 1 mają o 80% wyższe ryzyko zgonu niż pacjenci z ecog 0.
+ 
+ 2. ecog 0 vs 2:
+ - współczynnik $\approx 1.285$
+ - TR: $e^{1.285} \approx 3.6$
+ - Pacjenci z ecog 2 mają ponad 3,5-krotnie wyższe ryzyko zgonu niż pacjenci z ecog 0.
+ 
+  3. ecog 0 vs 3:
+ - współczynnik $\approx 2.341$
+ - TR: $e^{2.341} \approx 10.39$
+ - Pacjenci z ecog 3 mają ponad 10-krotnie wyższe ryzyko zgonu niż pacjenci z ecog 0.
+ 
+### age
+
+Współczynnik wynosi 0.012, więc iloraz ryzyka wynosi $e^{0.012} \approx 1.012$, co oznacza, że z każdym rokiem ryzyko zgonu wzasta o około 1,2%.
+
+
+### karno
+
+Współczynnik 0.014 daje iloraz ryzyka $e^{0.014} \approx 1.014$, co oznacza, że z każdym wzrostem w skali Karnofsky'ego o 1 punkt, ryzyko zgonu wzasta o około 1,4%.
+
+## Zadanie 7
+
+W tym zadaniu trzeba było wyznaczyć oszacowanie funkcji hazardu odpowiadającej rozkładowi czasu życia
+
+(a) kobiety w wieku 70 lat o charakterystyce ph.ecog=1 i ph.karno=90, 
+
+(b) kobiety w wieku 70 lato charakterystyce ph.ecog=2 i ph.karno=90,
+
+narysować wykresy tych funkcji i wykresy logarytmów tych funkcji.
+
+Na koniec też trzeba stwierdzić czy na podstawie tych wykresów możemy mieć wątpliwości co do przyjętego modelu proporcjonalnych hazardów?
+
+```{r obliczeniadowidzenia, echo=TRUE}
+mu <- ph_fit$coefficients[7]
+sigma <- exp(-ph_fit$coefficients[8])
+
+alfazero <- 1 / sigma
+lambdazero <- exp(-mu / sigma)
+
+bety_zmienne <- ph_fit$coefficients[1:6]
+
+z_a <- c(1, 1, 0, 0, age_c, karno_c)
+
+z_b <- c(1, 0, 1, 0, age_c, karno_c)
+
+HR_a <- exp(sum(z_a * bety_zmienne))
+HR_b <- exp(sum(z_b * bety_zmienne))
+
+hazard_func <- function(t, HR) {
+  lambdazero * alfazero * t^(alfazero - 1) * HR
+}
+```
+
+```{r wykresy hazardów, fig.cap="Wykres oszacowania funkcji hazardu"}
+curve(hazard_func(x, HR_b), from = 0, to = 800, col = "red", lwd = 2,
+      ylab = "h(t)", xlab = "Czas (dni)",
+      main = "Funkcje hazardu", ylim = c(0, 0.009))
+curve(hazard_func(x, HR_a), add = TRUE, col = "blue", lwd = 2)
+grid()
+legend("topleft", legend = c("ecog=2", "ecog=1"), col = c("red", "blue"), lwd = 2)
+
+
+
+
+```
+
+Na podstawie wykresu oszacowanych funkcji nie mam podstaw do wątpliwości, co do przyjętego modelu. Wykresy pokazują, że model zachowuje się zgodnie z teorią Proporcjonalnych Hazardów – pacjentka w gorszym stanie (*ecog* 2, czerwona linia) ma stale wyższe ryzyko zgonu niż pacjentka w lepszym stanie (*ecog* 1, niebieska linia), a relacja ta nie zmienia się w czasie.
+
+\newpage
+
+```{r wykres logów, fig.cap="Wykres logarytmów funkcji hazardów"}
+curve(log(hazard_func(x, HR_b)), from = 1, to = 800, col = "red", lwd = 2,
+      ylab = "log(h(t))", xlab = "Czas (dni)",
+      main = "Logarytmy funkcji hazardu")
+curve(log(hazard_func(x, HR_a)), add = TRUE, col = "blue", lwd = 2)
+grid()
+legend("topleft", legend = c("ecog=2", "ecog=1"), col = c("red", "blue"), lwd = 2)
+
+
+```
+ 
+Kolejny wykres tylko potwierdza mój powyższy argument.
+
+## Zadanie 8
+
+Teraz trzeba policzyć oszacowania prawdopodobieństwa, że czas życia tych kobiet będzie większy niż 300 dni. 
+
+```{r czasuprzezyciatralala, echo=TRUE}
+t <- 300
+
+S_300_a <- exp( - lambdazero * t^alfazero * HR_a )
+S_300_b <- exp( - lambdazero * t^alfazero * HR_b )
+```
+
+Prawdopodobieństwo dla kobiety (a) wynosi `r round(S_300_a, 4)*100`%, więc jest to tyle samo, co w Zadaniu 3, co utwierdza mnie w przekonaniu, że jest to dobry wynik.
+
+W przypadku kobiety (b) to prawdopodobnieństwo jest równe `r round(S_300_b,4)*100`%.
+
+\newpage
+
+## Zadanie 9
+
+A teraz dla kobiety (a) narysuję kolejny wykres, który tym razem będzie przestawiał fukcję przeżycia i porównam ją odrazu z funkcją z zadania 4.
+
+```{r pron2ni3wykrezow, fig.cap="Porównanie oszacowanych funkcji przeżycia (Model PH vs Model AFT)"}
+S_ph <- function(t) {
+  exp( - lambdazero * t^alfazero * HR_a )
+}
+z_a_aft <- c(1, 1, 1, 0, 0, age_c, karno_c)
+
+mu_aft_val <- sum(z_a_aft * fit_aft$coefficients)
+sigma_aft_val <- fit_aft$scale
+
+S_aft <- function(t) {
+  exp( - (t * exp(-mu_aft_val))^(1/sigma_aft_val) )
+}
+par(mfrow = c(1, 1))
+
+curve(S_ph(x), from = 0, to = 1000, 
+      col = "red", lwd = 4,
+      ylab = "Prawdopodobieństwo S(t)", xlab = "Czas (dni)",
+      main = "Porównanie oszacowanych funkcji przeżycia\n(Model PH vs Model AFT)")
+
+curve(S_aft(x), add = TRUE, 
+      col = "blue", lwd = 2, lty = 2) 
+grid()
+legend("topright", 
+       legend = c("Model PH", "Model AFT (Z.4)"),
+       col = c("red", "blue"), 
+       lwd = c(4, 2), 
+       lty = c(1, 2))
+
+
+
+```
+
+Jak widać obydwa oszacowania są praktycznie identyczne, co jest zgodne z teorią.
+
+
+# Lista 10
+
+Na tej liście znowu bierzemy na tapet dane *lung*, ale tym razem będziemy je analizować innymi metodami.
+
+## Zadanie 1
+
+W pierwszym zadaniu muszę oszacować parametry  modelu proporcjonalnych hazardów Coxa, ale w przeciwieństwie do poprzednich zadań (gdzie używałem funkcji *phreg* lub *survreg* z rozkładem Weibulla), tutaj nie zakładam żadnego konkretnego rozkładu bazowego czasu trwania życia. W R służy do tego funkcja *coxph* z pakietu survival.
+
+\newpage
+
+```{r model gigcoxa}
+fit_cox <- coxph(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) + age_centered + ph.karno_centered, data = dane)
+
+summary_cox <- summary(fit_cox)
+
+tabela_wynikow <- data.frame(      
+  HR = summary_cox$coefficients[, "exp(coef)"]    
+)
+
+nowe_nazwy <- c(
+  "sex=2",       
+  "ph.ecog 1",            
+  "ph.ecog 2",            
+  "ph.ecog 3",            
+  "age",                  
+  "ph.karno"              
+)
+rownames(tabela_wynikow) <- nowe_nazwy
+
+kable(tabela_wynikow, 
+      digits = 3, 
+      caption = "Oszacowane parametry modelu Coxa",
+      col.names = "Hazard Ratio (HR)")
+```
+
+## Zadanie 2
+
+Interpretacja współczynników
+
+### sex
+
+Hazard Ratio wynosi około 0.568, co oznacza, że bycie kobietą redukuje ryzyko zgonu o około 43%.
+
+### ecog
+
+1. ecog 0 vs 1:
+ - HR: 1.783
+ - Pacjenci z ecog 1 mają o ok. 80% wyższe ryzyko zgonu niż pacjenci z ecog 0.
+ 
+ 2. ecog 0 vs 2:
+ - HR: 3.455
+ - Pacjenci z ecog 2 mają o prawie 3.5 krotnie wyższe ryzyko zgonu niż pacjenci z ecog 0.
+ 
+  3. ecog 0 vs 3:
+ - HR: 10.978
+ - Pacjenci z ecog 3 mają o prawie 11 krotnie wyższe ryzyko zgonu niż pacjenci z ecog 0.
+ 
+### age
+ 
+ HR wynosi około 1.013, co oznacza, że każdy kolejny rok życia zwiększa ryzyko zgonu o około 1.3%.
+ 
+### karno 
+ 
+ HR wynosi około 1.013, co oznacza, że wzrost wskaźnika Karnofsky'ego o 1 punkt wiąże się ze wzrostem ryzyka o ok. 1.4%.
+ 
+## Zadanie 3 
+
+W tym zadaniu należy wyznaczyć oszacowanie bazowej skumulowanej funkcji hazardu i bazo wej funkcji przeżycia odpowiadającej rozkładowi czasu życia.
+
+W celu dokonanie owego zadania użyję funkcji basehaz, aby wyciągnąć bazową skumulowaną funkcję hazardu $H_0(t)$, , a następnie przeliczamy ją na bazową funkcję przeżycia $S_0(t)$ korzystając ze wzoru:
+
+$$ S_0(t) = \exp (-H_0(t))$$
+
+Argument *centered = FALSE* oznacza, że wyznaczamy funkcję bazową dla pacjenta, którego wszystkie zmienne w modelu wynoszą 0 (czyli: Mężczyzna, ecog0, wiek równy średniej, Karnofsky równy średniej).
+
+```{r bazaskulumowanannannanannana, echo=TRUE}
+bh <- basehaz(fit_cox, centered = FALSE)
+
+bh$survival <- exp(-bh$hazard)
+```
+
+
+## Zadanie 4
+
+w tym zadaniem celem jest wyznaczenie oszacowania skumulowanej funkcji hazardu odpowiadającej rozkładowi czasu życia:
+
+(a) kobiety w wieku 70 lat o charakterystyce ph.ecog=1 i ph.karno=90, 
+
+(b) kobiety w wieku 70 lat o charakterystyce ph.ecog=2 i ph.karno=90,
+
+następnie narysować wykresy tych funkcji i wykresy logarytmów tych funkcji.
+
+Na koniec trzeba odpowiedzieć na pytanie: Czy na podstawie tych wykresów możemy mieć wątpliwości co do przyjętego modelu proporcjonalnych hazardów?
+
+Na początku wyznaczam skumulowaną funkcję hazardu (H(t)) dla dwóch pacjentek, korzystając z dopasowanego modelu Coxa (*fit_cox*) i funkcji *survfit*.
+
+Skumulowana funkcja hazardu dla konkretnego pacjenta w modelu Coxa to:
+
+$$ H(t|z) = H_0(t) \exp(\beta^T z) $$
+
+```{r kobitki ab cox, echo=TRUE}
+nowe_dane <- data.frame(
+  sex = c(2, 2),                             
+  ph.ecog = c(1, 2),                         
+  age_centered = c(70 - mean_age, 70 - mean_age),
+  ph.karno_centered = c(90 - mean_karno, 90 - mean_karno)
+)
+
+oszacowanie <- survfit(fit_cox, newdata = nowe_dane)
+
+czas <- oszacowanie$time
+H_a <- oszacowanie$cumhaz[, 1] 
+H_b <- oszacowanie$cumhaz[, 2]
+```
+
+```{r wykres1cox, fig.cap="Wykres skumulowanej funkcji hazardu kobiety a i b"}
+plot(czas, H_b, type = "s", col = "red", lwd = 2,
+     xlab = "Czas (dni)", ylab = "H(t)",
+     main = "Skumulowana funkcja hazardu H(t)",
+     ylim = c(0, max(H_b)))
+lines(czas, H_a, type = "s", col = "blue", lwd = 2)
+legend("topleft", legend = c("ECOG=2 (b)", "ECOG=1 (a)"), 
+       col = c("red", "blue"), lwd = 2)
+grid()
+```
+
+```{r wykres2cox, fig.cap="Wykres logarytmu skumulowanego hazardu kobiety a i b"}
+plot(czas, log(H_b), type = "s", col = "red", lwd = 2,
+     xlab = "Czas (dni)", ylab = "log(H(t))",
+     main = "Logarytm skumulowanego hazardu",
+     xlim = c(0, 1000), ylim = c(-5, 2))
+lines(czas, log(H_a), type = "s", col = "blue", lwd = 2)
+legend("topleft", legend = c("ECOG=2 (b)", "ECOG=1 (a)"), 
+       col = c("red", "blue"), lwd = 2)
+grid()
+
+```
+
+\newpage
+
+W wykresie z logarytmamti krzywe wydają się być równoległe co mogło by implikować stały iloraz hazardów w czasie. Trzeba pamiętać że są to tylko predykcje modelu, ale jeśli chodzi o pytanie to nie widzę odstępstw od założenia o proporcjonalności hazardów, więc nie ma podstaw do wątpliwości.
+
+## Zadanie 5
+
+W tym zadania dla tych samych kobiet należy wyznaczyć oszacowanie funkcji przeżycia (w dniach) odpowiadającej rozkładowi czasu życia i na podstawie tego oszacowania obliczyć szacowane prawdopodobień- stwo, że czas życia kobiet o powyżej podanych charakterystykach b̨e dzie większy niż 300 dni.
+
+
+
+```{r p zycia a b cox, echo=TRUE}
+# oszacowanie z poprzedniego zadania
+wynik_300 <- summary(oszacowanie, times = 300)
+prob_a <- wynik_300$surv[1] 
+prob_b <- wynik_300$surv[2] 
+```
+
+Szacowane prawdopodobieństwo S(300) dla kobiety (a): `r round(prob_a, 4)*100`%.
+
+Szacowane prawdopodobieństwo S(300) dla kobiety (b): `r round(prob_b, 4)*100`%.
+
+W obydwu przypadkach prawdopodobieństwo wyszło minimalnie większe niż w zadaniu 3 i 8 z poprzedniej listy, jednak owa różnica moim zdaniem nie jest, aż tak znaczna.
+
+## Zadanie 6
+
+W tym zadaniu musiałem narysować wykres oszacowanej w zadaniu 5 punkt (a) funkcji przeżycia i porównać go z wykresem z zadania 9 z listy 9.
+
+```{r wykresyweibcox, fig.cap=" Wykres porównanujący funkcje przeżycia (Model Coxa vs Model Weibulla)"}
+nowe_dane_a <- data.frame(
+  sex = 2,
+  ph.ecog = 1,
+  age_centered = age_c,
+  ph.karno_centered = karno_c
+)
+
+fit_surv_cox <- survfit(fit_cox, newdata = nowe_dane_a)
+
+mu_ph <- ph_fit$coefficients[7]
+sigma_ph <- exp(-ph_fit$coefficients[8])
+alfazero <- 1 / sigma_ph
+lambdazero <- exp(-mu_ph / sigma_ph)
+
+bety_zmienne <- ph_fit$coefficients[1:6]
+z_a_vec <- c(1, 1, 0, 0, age_c, karno_c) 
+HR_a <- exp(sum(z_a_vec * bety_zmienne))
+
+S_ph <- function(t) {
+  exp( - lambdazero * t^alfazero * HR_a )
+}
+
+par(mfrow = c(1, 1))
+
+plot(fit_surv_cox, 
+     col = "darkgreen", lwd = 2, conf.int = FALSE,
+     xlab = "Czas (dni)", ylab = "Prawdopodobieństwo S(t)",
+     main = "Porównanie funkcji przeżycia\n(Model Coxa vs Model Weibulla)")
+
+curve(S_ph(x), from = 0, to = 1000, 
+      col = "red", lwd = 2, lty = 2, add = TRUE)
+
+legend("topright", 
+       legend = c("Model Coxa (Lista 10)", "Model Weibulla (Lista 9)"),
+       col = c("darkgreen", "red"), 
+       lwd = c(2, 2), 
+       lty = c(1, 2))
+
+grid()
+```
+
+
+Interpretacja:
+
+ - Linia zielona (Cox): Jest "schodkowa", ponieważ model Coxa nie narzuca żadnego kształtu funkcji bazowej – "uczy się" jej kształtu bezpośrednio z danych (momentów zgonów).
+
+ - Linia czerwona (Weibull): Jest gładka, ponieważ model Weibulla narzuca matematyczny wzór krzywej.
+ 
+Wniosek: Obie krzywe przebiegają bardzo blisko siebie. Oznacza to, że założenie rozkładu Weibulla było słuszne, a model parametryczny bardzo dobrze oddaje rzeczywistość opisaną przez bardziej elastyczny model Coxa.
+
+# Lista 11
+
+Na tej liście robię praktycznie identyczną analize jak na poprzednich tylko tym razem korzystając z innego modelu, a mianowicie modelu proporcjonalnych szans.
+
+## Zadanie 1
+
+Pierwsze zadnie zadanie polega na oszacowaniu parametrów modelu proporcjonlanych szans, aby to zrobić skorzystam z funkcji *prop.odds* z biblioteki *timereg*.
+
+
+```{r tabelka ps}
+set.seed(123)
+dane$status_bin <- ifelse(dane$status == 2, 1, 0)
+
+fit_po <- prop.odds(Event(time, status_bin) ~ as.factor(sex) + as.factor(ph.ecog) + 
+                    age_centered + ph.karno_centered, 
+                    data = dane, 
+                    n.sim = 1000)
+
+beta <- fit_po$gamma
+
+OR <- exp(beta)
+
+tabela_po <- data.frame(
+  beta = beta
+)
+
+zmiany <- c(
+  "as.factor\\(sex\\)2"      = "sex (Kobieta)",
+  "as.factor\\(ph.ecog\\)"   = "ph.ecog ",     
+  "age_centered"             = "age",
+  "ph.karno_centered"        = "ph.karno"
+)
+
+rownames(tabela_po) <- str_replace_all(rownames(tabela_po), zmiany)
+
+kable(tabela_po, 
+      digits = 3, 
+      caption = "Oszacowane parametry modelu Proporcjonalnych Szans",
+      col.names = "Współczynnik")
+```
+
+
+## Zadanie 2
+
+Teraz przejdę do interpretacji wyników.
+
+W tym modelu interpretujemy Iloraz Szans (Odds Ratio - OR). Zgodnie z definicją z wykładu, szansa  zdefiniowana jest jako stosunek prawdopodobieństwa wystąpienia zgonu do czasu t do prawdopodobieństwa przeżycia czasu t:
+
+
+$$ \theta (t) = \frac{1-S(t)}{S(t)} $$
+
+Wartość OR > 1 oznacza, że dana cecha zwiększa szansę zgonu. 
+Wartość OR < 1 oznacza, że dana cecha zmniejsza szansę zgonu.
+
+### sex
+
+Współczynnik OR = `r round(OR[1],3)`
+
+Interpretacja: Kobiety mają o 61.5% niższą szansę zgonu w porównaniu do mężczyzn.
+
+### ecog
+
+1. ecog 0 vs 1:
+
+ - Współczynnik OR = `r round(OR[2],3)`
+ 
+ - Interpretacja: Szansa zgonu dla pacjentów z ecog1 jest o 72.8% wyższa niż dla pacjentów z ecog0.
+ 
+ 2. ecog 0 vs 2:
+
+ - Współczynnik OR = `r round(OR[3],3)`
+ 
+ - Interpretacja: Szansa zgonu dla pacjentów z ecog2 jest ponad 4-krotnie wyższa niż dla pacjentów z ecog0.
+ 
+  3. ecog 0 vs 3:
+
+ - Współczynnik OR = `r round(OR[4],3)`
+ 
+ - Interpretacja: Szansa zgonu dla pacjentów z ecog3 jest prawie 7-krotnie wyższa niż dla pacjentów z ecog0.
+ 
+### age
+
+Współczynnik OR = `r round(OR[5],3)`
+
+Interpretacja: Z każdym rokiem życia szansa zgonu wzrasta o 1.3%.
+
+### karno
+
+Współczynnik OR = `r round(OR[6],3)`
+
+Interpretacja: Wzrost indeksu Karnofsky'ego o 1 punkt wiąże się ze zmniejszeniem szansy zgonu o 0.4%.
+
+## Zadanie 3
+
+W tym zadaniu należy wyznaczyć oszacowanie bazowej skumulowanej funkcji hazardu i bazowej funkcji przeżycia odpowiadającej rozkładowi czasu życia (przyjmując model opisany w zadaniu 1).
+
+
+Aby to zrobić wyciągne najpierw bazowe szanse korzystając z *fit_po$cum*. Następnie przeliczę je na bazową funkcję przeżycia ze wzoru $S_0(t) = \frac{1}{1+\theta_0(t)}$. Oczywiście bazową skumulowaną funkcję hazardu wyznaczę ze wzoru $H_0(t) = -\ln S_0(t)$.
+
+```{r skbazowe ps, echo=TRUE}
+time <- fit_po$cum[, 1]
+theta_0 <- fit_po$cum[, 2]
+S0 <- 1 / (1 + theta_0)
+H0 <- -log(S0)
+```
+
+## Zadanie 4
+
+Teraz wyznaczę oszacowanie skumulowanej funkcji hazardu odpowiadającej rozkładowi czasu życia 
+
+(a) kobiety w wieku 70 lat o charakterystyce ph.ecog=1 i ph.karno=90, 
+
+(b) kobiety w wieku 70 lat o charakterystyce ph.ecog=2 i ph.karno=90,
+
+Następnie narysuje wykresy tych funkcji i log(funkcji) i porównam z wykresami z poprzedniej listy
+
+```{r wykresy ps, fig.cap="Wykres porównujący skumulowane funkcje hazardu w czasie dla modeli PO i cox dla kobiet a i b"}
+
+beta <- fit_po$gamma
+names(beta) <- rownames(fit_po$gamma)
+
+get_beta_val <- function(name, coefs) {
+  idx <- grep(name, names(coefs), fixed = TRUE)
+  if (length(idx) > 0) return(coefs[idx])
+  return(0)
+}
+
+
+eta_a <- (get_beta_val("sex", beta) * 1) + 
+         (get_beta_val("ecog)1", beta) * 1) + 
+         (get_beta_val("age", beta) * age_c) + 
+         (get_beta_val("karno", beta) * karno_c)
+
+eta_b <- (get_beta_val("sex", beta) * 1) + 
+         (get_beta_val("ecog)2", beta) * 1) + 
+         (get_beta_val("age", beta) * age_c) + 
+         (get_beta_val("karno", beta) * karno_c)
+
+# Obliczenie H(t)
+H_a_or <- log(1 + theta_0 * exp(eta_a))
+H_b_or <- log(1 + theta_0 * exp(eta_b))
+
+col_red <- adjustcolor("red", alpha.f = 0.7)
+col_blue <- adjustcolor("blue", alpha.f = 0.7)
+
+
+max_y <- max(c(H_a_or, H_b_or, H_a, H_b), na.rm = TRUE)
+
+plot(time, H_b_or, type = "l", lwd = 2, col = "red",
+     xlab = "Czas (dni)", ylab = "H(t)",
+     main = "Porównanie H(t)",
+     ylim = c(0, max_y)) 
+lines(time, H_a_or, lwd = 2, col = "blue")
+lines(czas, H_b, type = "s", lwd = 2, lty = 2, col = col_red)
+lines(czas, H_a, type = "s", lwd = 2, lty = 2, col = col_blue)
+grid()
+legend("topleft", legend = c("ecog=2 (PO)", "ecog=1 (PO)", "ecog=2 (Cox)", "ecog=1 (Cox)"),
+       col = c("red", "blue"), lwd = c(2, 2), lty = c(1, 2))
+```
+
+```{r log or wykrss,fig.cap="Wykres porównujący logarytm z skumulowanej funkcji hazardu modeli PO i cox dla kobiet a i b"}
+
+# log(H(t))
+log_Ha <- log(H_a_or)
+log_Hb <- log(H_b_or)
+log_Ha_cox <- log(H_a)
+log_Hb_cox <- log(H_b)
+
+
+# nie chce mieć log(0) - logiczne
+all_logs <- c(log_Ha, log_Hb, log_Ha_cox, log_Hb_cox)
+valid_logs <- all_logs[is.finite(all_logs)]
+y_range <- range(valid_logs, na.rm = TRUE)
+
+plot(time, log_Hb, type = "l", lwd = 2, col = "red",
+     xlab = "Czas (dni)", ylab = "log(H(t))",
+     main = "Porównanie log(H(t))",
+     ylim = y_range,  
+     xlim = c(0, 800))
+lines(time, log_Ha, lwd = 2, col = "blue")
+lines(czas, log_Hb_cox, type = "s", lwd = 2, lty = 2, col = col_red)
+lines(czas, log_Ha_cox, type = "s", lwd = 2, lty = 2, col = col_blue)
+grid()
+legend("bottomright", legend = c("ecog=2 (PO)", "ecog=1 (PO)", "ecog=2 (Cox)", "ecog=1 (Cox)"),
+       col = c("red", "blue"), lwd = c(2, 2), lty = c(1, 2))
+
+
+
+```
+
+
+\newpage
+
+Coś co wyrażnie widać zwłaszcza na wykresie logarytmicznym to ,to że tak jak krzywe modelu Coxa (przerywane) są do siebie równoległe w czasie tak te z modelu proporcjonalnych szans zbliżają się do siebie z biegiem czasu, co mogłoby sugerować (według tego modelu), że wpływ wyższego stopnia ecog słabnie z czasem. Znaczy to, że jeśli kobieta b w cieższym stanie (ecog 2) przeżyje początkowy okres, jej "szansa" na dalsze przeżycie staje się relatywnie bardziej zbliżona do kobiety a w lepszym stanie (ecog 1), niż zakładałby to model Coxa.
+
+## Zadanie 5
+
+Teraz należy wyznaczyć oszacowanie funkcji przeżycia i na podstawie tego oszacowania obliczyć szacowane prawdopodobieństwo, że czas życia kobiet o powyżej podanych charakterystykach będzie większy niż 300 dni. Oszacowane prawdopodobieństwo dla kobiety o charakterystykach opisanych w punkcie (a) porównać z prawdopodobieństwem uzyskanym w zadaniu 5 z listy 10.
+
+Kod do obliczenia prawdopodobieństwa:
+
+```{r ysgat, echo=TRUE}
+times <- fit_po$cum[, 1] 
+odds_vals <- fit_po$cum[, 2] 
+
+idx_300 <- max(which(times <= 300))
+theta_0_300 <- odds_vals[idx_300]
+
+beta <- fit_po$gamma
+names(beta) <- rownames(fit_po$gamma)
+# Funkcja pomocnicza do pobierania bety
+get_b <- function(name) {
+  idx <- grep(name, names(beta), fixed = TRUE)
+  if(length(idx) > 0) return(beta[idx]) else return(0)
+}
+# Pacjentka (a)
+eta_a <- (get_b("sex") * 1) +      
+         (get_b("ecog)1") * 1) +  
+         (get_b("age") * age_c) + 
+         (get_b("karno") * karno_c)
+# Szansa w chwili 300: theta(300) = theta_0(300) * exp(eta)
+theta_a_300 <- theta_0_300 * exp(eta_a)
+# Prawdopodobieństwo przeżycia: S(300) = 1 / (1 + theta(300))
+S_a_300 <- 1 / (1 + theta_a_300)
+#  Pacjentka (b) 
+eta_b <- (get_b("sex") * 1) +      
+         (get_b("ecog)2") * 1) +  
+         (get_b("age") * age_c) + 
+         (get_b("karno") * karno_c)
+# Szansa w chwili 300:
+theta_b_300 <- theta_0_300 * exp(eta_b)
+# Prawdopodobieństwo przeżycia:
+S_b_300 <- 1 / (1 + theta_b_300)
+```
+
+Prawdopodbieństwo przeżycia więcej niż 300 dni, dla kobiety (a) wynosi `r round(S_a_300,3)*100`%, co jest znacznie wyższym prawdopodobieństwem niż w przypadku modelu Coxa, gdzie dla kobiety (a) to prawdopobobieństwo wynosiło `r round(prob_a, 4)*100`%. 
+
+Dla kobiety (b) model PO wylicza prawdopodobieństwo przeżycia na `r round(S_b_300,3)*100`%, a model Coxa na `r round(prob_b, 4)*100`%. Te wyniki jasno pokazują, że model PO daje większe szanse na przeżycie.
+
+## Zadanie 6
+
+W tym zadaniu narusyje wykres do oszacowanej funkcji przeżycia z poprzedniego zadania i porównać do poprzednich oszacowań z poprzednich list.
+
+```{r wykresy L11, fig.cap="Wykres porównujący oszacowania funkcji przeżycia (model Coxa vs model PO"}
+par(mfrow = c(1, 1))
+S_po_vals <- 1 / (1 + theta_0 * exp(eta_a))
+
+plot(fit_surv_cox, 
+     col = "darkgreen", lwd = 3, conf.int = FALSE,
+     xlab = "Czas (dni)", ylab = "Prawdopodobieństwo S(t)",
+     main = "Porównanie funkcji przeżycia\n(Model Coxa vs Model Proporcjonalnych Szans)")
+
+lines(times, S_po_vals, 
+      col = "blue", lwd = 3, lty = 1) 
+grid()
+legend("topright", 
+       legend = c("Model Coxa", "Model PO"),
+       col = c("darkgreen", "blue"), 
+       lwd = c(3, 3), 
+       lty = c(1, 1))
+
+
+```
+
+
+Krzywa modelu PO jest nieco mniej "schodkowa". Dodatkowo model PO daje większe szanse na przetrwanie, momentami na wykresie różnice sięgają blisko 10%, jednak po około 700 dniach wykresy zbiegają się do siebie i przyjmują od wtedy prawie takie same wartości. To oznacza, że w dłuższej perspektywie modele dają takie same szanse na przeżycie.
+
+
+# Lista 12
+
+Na tej liście poddam różne modele różnym testom, które będą sprawdzać, jakie zmienne są istotne, a jakie nie. Oczywiście będą to zmienne *age, sex, ph.ecog* i *ph.karno*, które poddam tym testom.
+
+## Zadanie 1
+
+W pierwszym zadaniu przyjrzę się modelowi przyspieszonego czasu awarii, w którym bazowa funkcja czasu przeżycia odpowiada rozkładowi Weibulla. Zmienne poddam testom Walda oraz IW na poziomie istotności $\alpha = 0.05$, z poniższymi hipotezami:
+
+$H_0$: zmienna nie ma wpływu na przeżycie
+
+$H_1$: zmienna ma wpływ
+
+### podpunkt a)
+
+W tym podpunkcie sprawdzę, czy zmienna *age* jest istotna, w tym celu użyję poniższego kodu:
+
+```{r testy modeli essa, echo=TRUE}
+fit_no_age <- survreg(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) 
+                      + ph.karno_centered, data = dane, dist = "weibull")
+p_wald_age <- summary(fit_aft)$table["age_centered", "p"]
+test_age <- anova(fit_no_age, fit_aft)
+p_val_lr_age <- test_age[2, "Pr(>Chi)"]
+```
+
+Test Walda dał p-wartość na poziomie `r round(p_wald_age,5)`, co nie daje podstaw do odrzucenia hipotezy zerowej nawet przy podwyższonym poziomie istotności.
+
+Test IW dał bardzo zbliżony wynik ponieważ p-wartość wyniosła `r round(p_val_lr_age,5)`, co również nie daje podstaw do odrzucenia hipotezy zerowej.
+
+Wnioski: Zmienna *age* nie jest istotna.
+
+### podpunkt b) 
+
+W tym podpunkcie sprawdzę, czy zmienna *sex* jest istotna, w tym celu użyję poniższego kodu:
+
+```{r test dla sex, echo=TRUE}
+fit_no_sex <- survreg(Surv(time, status) ~ as.factor(ph.ecog) + age_centered 
+                      + ph.karno_centered, data = dane, dist = "weibull")
+p_wald_sex <- summary(fit_aft)$table["as.factor(sex)2", "p"]
+test_sex <- anova(fit_no_sex, fit_aft)
+p_val_lr_sex <- test_sex[2, "Pr(>Chi)"]
+
+```
+
+Test Walda dał p-wartość na poziomie `r round(p_wald_sex,5)`, więc należy odrzucić hipotezę zerową, zwłaszcza że test IW również dał wyniki mniejsze niż 0.05, bo p-wartość tego testu wyniosła `r round(p_val_lr_sex,5)`.
+
+Wnioski: zmienna *sex* jest istotna, co pokrywa się z wcześniejszą analizą, gdzie pokazywałem, że dla różnych modeli kobiety zawsze wykazywały większe szanse przeżycia.
+
+### podpunkt c
+
+W tym podpunkcie należało sprawdzić testem IW, hipotezę, że rozkład czasu życia jest taki sam dla pacjenta o sprawności ECOG na poziomie 0, 1, 2, 3.
+
+Test IW bada wszytskie zmienne na raz, więc uznałem, że dodatkowo sprawdzę te zmienne też testem Walda.
+
+```{r test ecog, echo=TRUE}
+fit_no_ecog <- survreg(Surv(time, status) ~ as.factor(sex) + age_centered 
+                       + ph.karno_centered,    data = dane, dist = "weibull")
+test_ecog <- anova(fit_no_ecog, fit_aft)
+p_wald_ecog1 <- summary(fit_aft)$table["as.factor(ph.ecog)1", "p"]
+p_wald_ecog2 <- summary(fit_aft)$table["as.factor(ph.ecog)2", "p"]
+p_wald_ecog3 <- summary(fit_aft)$table["as.factor(ph.ecog)3", "p"]
+p_val_lr_ecog <- test_ecog[2, "Pr(>Chi)"]
+
+```
+
+Używając testu IW dostałem p-wartość na poziomie `r round(p_val_lr_ecog,5)`, co definitywnie nakazuje odrzucić hipotezę zerową. 
+
+Można, więc wnoskować, że zmienne ecog mają wpływ na czas życia pacjenta, dodatkowo korzystając z testu Walda można dość do wniosku, że zmienna ecog=2 jest najbardziej istotna ponieważ jej p-wartośc wynosi zaledwie `r round(p_wald_ecog2,5)`, podczas gdy zmienne ecog=1 oraz ecog=3 są również istotne, gdyż ich p-wartości są równe kolejno `r round(p_wald_ecog1,5)` oraz `r round(p_wald_ecog3, 5)`.
+
+
+## Zadanie 2
+
+W tym zadaniu należy wykonać analogiczną analizę, ale tym razem wezmę pod lupę model proporcjonalnych hazardów Coxa.
+
+### podpunkt a)
+
+W tym podpunkcie sprawdzę, czy zmienna *age* jest istotna, w tym celu użyję poniższego kodu:
+
+
+```{r cox age test essa, echo=TRUE}
+fit_cox_no_age <- coxph(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) 
+                        + ph.karno_centered, data = dane)
+test_age_cox <- anova(fit_cox_no_age, fit_cox)
+p_lr_age_cox <- test_age_cox[2, ncol(test_age_cox)]
+p_wald_age_cox <- summary(fit_cox)$coefficients["age_centered", "Pr(>|z|)"]
+```
+
+Test Walda dał p-wartość na poziomie `r round(p_wald_age_cox,5)`, co nie daje podstaw do odrzucenia hipotezy zerowej nawet przy podwyższonym poziomie istotności.
+
+Test IW dał bardzo zbliżony wynik ponieważ p-wartość wyniosła `r round(p_lr_age_cox,5)`, co również nie daje podstaw do odrzucenia hipotezy zerowej.
+
+Wnioski: Zmienna *age* nie jest istotna.
+
+### podpunkt b)
+
+W tym podpunkcie sprawdzę, czy zmienna *sex* jest istotna, w tym celu użyję poniższego kodu:
+
+```{r sex test cox, echo=TRUE}
+fit_cox_no_sex <- coxph(Surv(time, status) ~ as.factor(ph.ecog) + age_centered 
+                        + ph.karno_centered, data = dane)
+test_sex_cox <- anova(fit_cox_no_sex, fit_cox)
+p_lr_sex_cox <- test_sex_cox[2, ncol(test_sex_cox)]
+p_wald_sex_cox <- summary(fit_cox)$coefficients["as.factor(sex)2", "Pr(>|z|)"]
+```
+
+Test Walda dał p-wartość na poziomie `r round(p_wald_sex_cox,5)`, więc należy odrzucić hipotezę zerową, zwłaszcza że test IW również dał wyniki mniejsze niż 0.05, bo p-wartość tego testu wyniosła `r round(p_lr_sex_cox,5)`.
+
+Wnioski: zmienna *sex* jest istotna, co pokrywa się z wcześniejszą analizą, gdzie pokazywałem, że dla różnych modeli kobiety zawsze wykazywały większe szanse przeżycia.
+
+### podpunkt c)
+
+W tym podpunkcie należało sprawdzić testem IW, hipotezę, że rozkład czasu życia jest taki sam dla pacjenta o sprawności ecog na poziomie 0, 1, 2, 3.
+
+Test IW bada wszystkie zmienne na raz, więc uznałem, że dodatkowo sprawdzę te zmienne też testem Walda.
+
+```{r ecog testy cos tam, echo=TRUE}
+fit_cox_no_ecog <- coxph(Surv(time, status) ~ as.factor(sex) + age_centered 
+                         + ph.karno_centered, data = dane)
+test_ecog_cox <- anova(fit_cox_no_ecog, fit_cox)
+p_lr_ecog_cox <- test_ecog_cox[2, ncol(test_ecog_cox)]
+p_wald_cox_ecog1 <- summary(fit_cox)$coefficients["as.factor(ph.ecog)1", "Pr(>|z|)"]
+p_wald_cox_ecog2 <- summary(fit_cox)$coefficients["as.factor(ph.ecog)2", "Pr(>|z|)"]
+p_wald_cox_ecog3 <- summary(fit_cox)$coefficients["as.factor(ph.ecog)3", "Pr(>|z|)"]
+```
+
+Używając testu IW dostałem p-wartość na poziomie `r round(p_val_lr_ecog,5)`, co definitywnie nakazuje odrzucić hipotezę zerową. 
+
+Można więc wnioskować, że zmienne ecog mają wpływ na czas życia pacjenta, dodatkowo korzystając z testu Walda można dojść do wniosku, że zmienna ecog=2 jest najbardziej istotna ponieważ jej p-wartość wynosi zaledwie `r round(p_wald_cox_ecog2,5)`, podczas gdy zmienne ecog=1 oraz ecog=3 są również istotne, gdyż ich p-wartości są równe kolejno `r round(p_wald_cox_ecog1,5)` oraz `r round(p_wald_cox_ecog3, 5)`.
+
+
+## Zadanie 3 (dodatkowe)
+
+W tym zadaniu znowu przyjmuję model przyspieszonego czasu awarii, jak w zadaniu pierwszym, ale tym razem do oceny istotności zmiennych będę używał innych kryteriów.
+
+### podpunkt a)
+
+**Metoda eliminacji w oparciu o test IW**
+
+Ta metoda w dużym skrócie działa następująco: 
+
+1. Bierzemy model z wszystkimi zmiennymi i testujemy hipotezę zerową, że zmienne nie są istotne na poziomie istotności 0.05.
+
+2. Wybieramy zmienną, która ma największą p-wartość (która przekracza oczywiście poziom istotności) i następnie usuwamy tę zmienną z modelu.
+
+3. Powtarzamy punkty 1 i 2 do momentu aż wszystkie p-wartości zmiennych pozostających w modelu będą < 0.05.
+
+Powyższy algorytm wykonuje poniższy kod:
+
+```{r elimicnacje model aft, echo=TRUE, eval=FALSE}
+drop1(fit_aft, test = "Chisq")
+# usuwam age bo największe p
+drop1(fit_no_age, test = "Chisq")
+# usuwam ph.karno
+fit_no_age_karno <- survreg(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog),
+                            data = dane, dist = "weibull")
+drop1(fit_no_age_karno, test = "Chisq")
+# wszystkie p już mniejsze niż 0,05
+```
+
+Po dodatkowych przekształceniach oto wyniki jakie otrzymałem:
+
+Najpierw najwyższą p-wartość miała zmienna *age*, więc została usunięta. Następnie usunąłem zmienną *ph.karno*, której p-wartość również znacznie przekraczała poziom istotności. W finalnym modelu pozostały jedynie zmienne *sex* i *ph.ecog*, więc według tej metody tylko one są istotne. Poniższa tabela przedstawia proces eliminacji zmiennych i jak zachowywały się ich p-wartości.
+
+```{r przekształcenia XDD}
+clean_drop1 <- function(model, step_name) {
+  drop_res <- drop1(model, test = "Chisq")
+  df <- as.data.frame(drop_res) %>%
+    rownames_to_column("Zmienna") %>%
+    filter(!is.na(`Pr(>Chi)`)) %>% 
+    mutate(Krok = step_name) %>%
+    select(Krok, Zmienna, `p-value` = `Pr(>Chi)`)
+  
+  return(df)
+}
+res_1 <- clean_drop1(fit_aft, "1. Model Pełny")
+res_2 <- clean_drop1(fit_no_age, "2. Bez 'age'")
+fit_no_age_karno <- survreg(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog),
+                            data = dane, dist = "weibull")
+res_3 <- clean_drop1(fit_no_age_karno, "3. Finalny model")
+wyniki_lrt <- bind_rows(res_1, res_2, res_3)
+kable(wyniki_lrt, digits = 4, caption = "Przebieg eliminacji zmiennych (Test IW)", row.names = FALSE)
+```
+
+### podpunkt b)
+
+**Metoda AIC**
+
+Tym razem skorzystam z kryterium informacyjnego Akaike (AIC), również w celu wybrania najlepszego modelu przyspieszonego czasu awarii korzystając z funkcji *step*. Wzór na AIC jest następujący:
+
+$$
+AIC = -2\ln L(\hat{\theta}|\mathbf{y}) + 2k
+$$
+gdzie $L$ jest funkcją wiarygodności związana z danym modelem parametrycznym, $\hat{\theta}$ jest estymatorem NW parametru $\theta$ modelu, $\mathbf{y}$ jest wektorem danych, natomiast k jest liczbą estymowanych parametrów modelu.
+
+```{r aic test}
+# capture.output zapewnia że R nie wypluwa do raportu brzydkich hasztagów, których nie chce w raporcie
+capture <- capture.output({
+  best_aic <- step(fit_aft, direction = "backward")
+})
+tabela_aic <- tidy(best_aic) %>%
+  select(Term = term, p.value) %>%
+  filter(Term != "(Intercept)", Term != "Log(scale)")
+kable(tabela_aic, digits = 5, caption = "Współczynniki najlepszego modelu wg kryterium AIC")
+```
+
+**Wnioski:** 
+
+Kryterium informacyjne Akaike'a wykazało, że optymalny model powinien zawierać dwie zmienne, które są istotne: *sex* oraz *ph.ecog*.
+
+Co ciekawe kryterium, postanowaiło zostawić zmienną *ph.ecog*, mimo że p-wartość ecog3 jest większa od poziomu istotności $\alpha = 0.05$. Z drugiej strony ecog2 jest absolutnie kluczową zmienną według modelu i jej p-wartość jest zdecydowanie najmniejsza.
+
+### podpunkt c)
+
+**Metoda BIC**
+
+Tym razem skorzystam z bayesowskiego kryterium infomacyjnego (BIC), również w celu wybrania najlepszego modelu przyspieszonego czasu awarii korzystając z funkcji *step*, jednak ze względu na inny wzór zamiast 2k będzie $k \cdot\ln n$, gdzie n to liczba danych kompletnych. Wzór na BIC jest następujący:
+
+$$
+BIC = -2\ln L(\hat{\theta}|\mathbf{y}) + k\ln n
+$$
+gdzie $L$ jest funkcją wiarygodności związana z danym modelem parametrycznym, $\hat{\theta}$ jest estymatorem NW parametru $\theta$ modelu, $\mathbf{y}$ jest wektorem danych, natomiast k jest liczbą estymowanych parametrów modelu.
+
+
+```{r bic test}
+n_events <- sum(dane$status == 2)
+capture2 <- capture.output({
+  best_bic <- step(fit_aft, direction = "backward", k = log(n_events))
+})
+tabela_bic <- tidy(best_bic) %>%
+  select(Term = term, p.value) %>%
+  filter(Term != "(Intercept)", Term != "Log(scale)")
+
+kable(tabela_bic, digits = 5, caption = "Współczynniki najlepszego modelu wg kryterium BIC")
+```
+
+
+**Wnioski:**
+
+Kryterium BIC zadziałało identycznie jak AIC, wyeliminowało zmienne *age* oraz *ph.karno*, uznając je za nieistotne. Następnie zostawiło model, który składa się ze zmiennych *sex* i *ph.ecog*. P-wartości są takie same ponieważ model, który pozostał jest taki sam, znaczy to jest ciągle model przyspieszonego czasu awarii i przez to, że kryteria stworzyły model z tych samych zmiennych p-wartości mają taką samą wartość.
+
+## Zadanie 4 (dodatkowe)
+
+To zadanie jest bardzo podobne do poprzedniego, ale tym razem należy użyć modelu Coxa
+
+### podpunkt a)
+
+**Metoda eliminacji w oparciu o test IW**
+
+Będę używał tutaj metody eliminacji w oparciu o test IW opisanej powyżej, kod też się znacząco nie zmienia jednak muszę podstawić model Coxa.
+
+```{r elimicnacje model cox, echo=TRUE, eval=FALSE}
+drop1(fit_cox, test = "Chisq")
+# usuwam ph.karno bo najwieksze p
+fit_cox_no_karno <- coxph(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) 
+                          + age_centered, data = dane)
+drop1(fit_cox_no_karno, test = "Chisq")
+# usuwam age ze względu na największą p-wartość
+fit_cox_no_age_karno <- coxph(Surv(time, status) ~ as.factor(sex) 
+                              + as.factor(ph.ecog),data = dane)
+drop1(fit_cox_no_age_karno, test = "Chisq")
+# wszyskie p już mniejsze niż 0,05
+```
+
+Poniżej znajduje się tabela, przedstawiająca p-wartości i proces eliminacji:
+
+```{r tabela cox elimicnacja}
+res_1 <- clean_drop1(fit_cox, "1. Model Pełny")
+fit_cox_no_karno <- coxph(Surv(time, status) ~ as.factor(sex) + as.factor(ph.ecog) 
+                          + age_centered, data = dane)
+res_2 <- clean_drop1(fit_cox_no_karno, "2. Bez 'ph.karno'")
+fit_cox_no_age_karno <- coxph(Surv(time, status) ~ as.factor(sex) 
+                              + as.factor(ph.ecog),data = dane)
+res_3 <- clean_drop1(fit_cox_no_age_karno, "3. Finalny model")
+wyniki_lrt <- bind_rows(res_1, res_2, res_3)
+kable(wyniki_lrt, digits = 4, caption = "Przebieg eliminacji zmiennych (Test IW)", row.names = FALSE)
+```
+
+
+W odróżnieniu do modelu przyspieszonego czasu awarii, najpierw największą p-wartością wykazała się zmienna *ph.karno*, więc ją jako pierwszą usunąłem ją z modelu, następnie z modelu została usunięta zmienna *age*, która wykazała się najwyższą do tej pory p-wartością. Finalny model został z dwiema zmiennymi: *sex* oraz *ph.ecog*, których p-wartości nie przekraczały już poziomu istotności, co implikuje iż według metody eliminacji dla modelu Coxa to właśnie owe zmienne są istotne.
+
+
+### podpunkt b)
+
+**Metoda AIC**
+
+Tym razem skorzystam z kryterium informacyjnego Akaike (AIC), również w celu wybrania najlepszego modelu Coxa korzystając z funkcji *step*. Wzór na AIC jest następujący:
+
+$$
+AIC = -2\ln L(\hat{\theta}|\mathbf{y}) + 2k
+$$
+gdzie $L$ jest funkcją wiarygodności związana z danym modelem parametrycznym, $\hat{\theta}$ jest estymatorem NW parametru $\theta$ modelu, $\mathbf{y}$ jest wektorem danych, natomiast k jest liczbą estymowanych paramterów modelu.
+
+```{r aic test cox}
+capture <- capture.output({
+  best_aic <- step(fit_cox, direction = "backward")
+})
+tabela_aic <- tidy(best_aic) %>%
+  select(Term = term, p.value) %>%
+  filter(Term != "(Intercept)", Term != "Log(scale)")
+kable(tabela_aic, digits = 5, caption = "Współczynniki najlepszego modelu wg kryterium AIC")
+```
+
+**Wnioski:** 
+
+Kryterium informacyjne Akaike'a wykazało, że optymalny model powinien zawierać dwie zmienne, które są istotne: *sex* oraz *ph.ecog*.
+
+Decyzje podjęte przez kryterium, nie różnią się w porównaniu do poprzedniego zadania, jednak tym razem p-wartości wszystkich zmiennych poza ecog2 są nieco mniejsze, co jest logiczne biorąc pod uwagę wcześniejszą analizę modelu Coxa i porównywanie go do modelu AFT.
+
+### podpunkt c)
+
+**Metoda BIC**
+
+Tym razem skorzystam z bayesowskiego kryterium infomacyjnego (BIC), również w celu wybrania najlepszego modelu Coxa korzystając z funkcji *step*, jednak ze względu na inny wzór zamiast 2k będzie $k \cdot\ln n$, gdzie n to liczba danych kompletnych. Wzór na BIC jest następujący:
+
+$$
+BIC = -2\ln L(\hat{\theta}|\mathbf{y}) + k\ln n
+$$
+gdzie $L$ jest funkcja, wiarogodności związana z danym modelem parametrycznym, $\hat{\theta}$ jest estymatorem NW parametru $\theta$ modelu, $\mathbf{y}$ jest wektorem danych, natomiast k jest liczbą estymowanych paramterów modelu.
+
+
+```{r bic test cox}
+n_events <- sum(dane$status == 2)
+capture2 <- capture.output({
+  best_bic <- step(fit_cox, direction = "backward", k = log(n_events))
+})
+tabela_bic <- tidy(best_bic) %>%
+  select(Term = term, p.value) %>%
+  filter(Term != "(Intercept)", Term != "Log(scale)")
+
+kable(tabela_bic, digits = 5, caption = "Współczynniki najlepszego modelu wg kryterium BIC")
+```
+
+
+**Wnioski:**
+
+Kryterium BIC zadziałało identycznie jak AIC, wyeliminowało zmienne *age* oraz *ph.karno*, uznając je za nieistotne. Następnie zostawiło model, który składa się z zmiennych *sex* i *ph.ecog*, czyli zmiennymi, które według kryterium BIC są istotne.
+
+
+# Zadania dodatkowe
+
+## FIC
+
+Metoda FIC pozwala dostosować model do konkretnego pytania. W analizie wykorzystałem trzy różne opcje *focus*:
+
+1.  Focus *hr* (Hazard Ratio):
+    * Cel: Minimalizacja błędu estymacji logarytmu ilorazu hazardu dla wybranej zmiennej (tutaj: dla zmiennej *sex*).
+
+2.  Focus *survival* (Prawdopodobieństwo Przeżycia):
+    * Cel: Minimalizacja błędu estymacji funkcji przeżycia $S(t)$ w punkcie $t=365$ dni (1 rok) dla typowego pacjenta (Mężczyzna, ECOG 1, średni wiek).
+   
+
+3.  Focus *cumhaz* (Skumulowany Hazard):
+    * Cel: Minimalizacja błędu estymacji skumulowanej funkcji hazardu $\Lambda(t)$ w czasie $t=365$.
+   
+   
+W poniższej tabeli znajdują się wyniki do każdego *focus*, Model_ID oznacza jakie zmienne zostały wybrane c(*sex*,*ph.ecog*,*age*,*ph.karno*), oczywiście 1 oznacza, że model zawiera tą zmienną, a 0 że jej nie uwzględnia.   
+
+```{r metoda fic w mig}
+data(lung)
+
+# obróbka danych pod zadanie
+df_work <- lung %>%
+  select(time, status, sex, ph.ecog, age, ph.karno) %>%
+  na.omit() %>%
+  mutate(
+    status = as.integer(status == 2),  # 1 = zgon (event), 0 = cenzor
+    sex = factor(sex, levels = c(1, 2), labels = c("male", "female"))
+  )
+
+# pełny model Coxa
+wide <- coxph(Surv(time, status) ~ sex + ph.ecog + age + ph.karno,
+              data = df_work, x = TRUE)
+
+# model tylko z zmienną sex
+inds0 <- expand_inds(c(1, 0, 0, 0), wide)  
+# wszystkie kombinacje zawierające sex
+inds  <- all_inds(wide, inds0)             
+
+# HR: hazard ratio kobieta vs mężczyzna = exp((X_female - X_male)^T beta)
+new_hr <- data.frame(
+  sex      = c("female", "male"),
+  ph.ecog  = median(df_work$ph.ecog),
+  age      = median(df_work$age),
+  ph.karno = median(df_work$ph.karno)
+)
+X_hr_2 <- newdata_to_X(new_hr, wide, intercept = FALSE)
+X_hr   <- X_hr_2[1, , drop = FALSE] - X_hr_2[2, , drop = FALSE]
+
+# Survival/CumHaz: "typowy" pacjent 
+new_typ <- data.frame(
+  sex      = "male",
+  ph.ecog  = median(df_work$ph.ecog),
+  age      = median(df_work$age),
+  ph.karno = median(df_work$ph.karno)
+)
+X_typ <- newdata_to_X(new_typ, wide, intercept = FALSE)
+
+#  FIC dla trzech focusów 
+fic_hr   <- fic(wide, inds = inds, inds0 = inds0, focus = "hr",      X = X_hr)
+fic_surv <- fic(wide, inds = inds, inds0 = inds0, focus = "survival", X = X_typ, t = 365)
+fic_cum  <- fic(wide, inds = inds, inds0 = inds0, focus = "cumhaz",  X = X_typ, t = 365)
+
+#  Wybór najlepszego modelu (minimalne FIC) + dopasowanie finalnego Coxa
+pick_best <- function(fic_df, wide, inds) {
+  i <- which.min(fic_df$FIC)
+  best_mod <- as.character(fic_df$mods[i])
+  best_inds <- inds[best_mod, , drop = FALSE]
+  best_fit <- fit_submodels(wide, inds = best_inds)[[1]]
+  list(best_mod = best_mod, best_fit = best_fit, best_FIC = fic_df$FIC[i])
+}
+
+best_hr   <- pick_best(fic_hr, wide, inds)
+best_surv <- pick_best(fic_surv, wide, inds)
+best_cum  <- pick_best(fic_cum, wide, inds)
+
+res_df <- data.frame(
+  Focus = c("hr (female vs male)", "survival(t=365)", "cumhaz(t=365)"),
+  Model_ID = c(best_hr$best_mod, best_surv$best_mod, best_cum$best_mod),
+  FIC = c(best_hr$best_FIC, best_surv$best_FIC, best_cum$best_FIC)
+)
+
+kable(res_df, digits = 4, caption = "Selekcja zmiennych metodą FIC (Cox)")
+```
+
+
+**Wnioski:**
+
+1. hr 
+
+HR między kobietą a mężczyzną jest najlepiej estymowany, gdy model zawiera dodatkowo zmienne *ph.ecog* oraz *age*, z kolei nie warto korzystać ze zmiennej *ph.karno*.
+
+2. survival
+
+
+Dla prognozy przeżycia po 365 dniach dla pacjenta o profilu $X$ (median age, median Karnofsky, ECOG=median, płeć = male), FIC wskazał, że najbardziej efektywny jest model bazowy obejmujący jedynie płeć. Dodanie ECOG, wieku i Karnofsky’ego nie poprawia (w sensie FIC) jakości estymacji tego konkretnego $S(365|X)$, a może zwiększać wariancję estymatora.
+
+3. cumhaz
+
+Tutaj FIC decyduje się na model taki sam jak dla hr, natomiast wartość FIC jest znacznie większa co może wydawać się błędne jednak FIC ma inną skalę dla różnych focusów (cumhaz ma inną jednostkę niż hr).
+
+
+
+## Indeks Zgodności
+
+Indeks zgodności (statystyka C) jest miarą oceny zdolności predykcyjnej modelu statystycznego. Definiuje się go jako ułamek par zgodnych, czyli takich, dla których predykcja modelu i obserwowane dane wskazują ten sam kierunek (np. pacjent z wyższym przewidywanym ryzykiem żyje krócej). Wartość ta jest estymatorem prawdopodobieństwa, że dla losowo wybranej pary obserwacji model poprawnie uporządkuje je względem czasu przeżycia.
+
+ - Indeks przyjmuje wartości od 0 do 1.
+ - Wartość 0.5 odpowiada losowemu zgadywaniu (jak rzut monetą).
+ 
+ 
+Aby obliczyć indeks zgodności dla modelu AFT oraz modelu Coxa, użyję funkcji *concordance* z pakietu *survival*.
+
+```{r indeks zgodności, echo=TRUE}
+c_weibull <- concordance(fit_aft)
+c_cox <- concordance(fit_cox)
+```
+
+Oto jakie wartości otrzymujemy dla modeli:
+
+1. Model AFT: `r c_weibull$concordance`
+
+2. Model Coxa: `r c_cox$concordance`
+
+
+Opierając się wyłącznie na kryterium indeksu zgodności, model Coxa jest nieznacznie lepszy od modelu Weibulla.
+
+Uzasadnienie: Indeks zgodności mierzy zdolność dyskryminacyjną modelu – im wyższa wartość, tym większe prawdopodobieństwo, że model poprawnie uszereguje czasy przeżycia dwóch losowych pacjentów. Należy jednak zauważyć, że różnica rzędu 0.0015 jest w praktyce pomijalna, co sugeruje, że oba modele radzą sobie z tymi danymi niemal identycznie (na poziomie "dostatecznym", gdyż wartości w okolicach 0.63 wskazują na zdolność predykcyjną lepszą od losowej, ale daleką od idealnej).
+
+
